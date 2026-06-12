@@ -760,7 +760,9 @@ defmodule SequinWeb.SinkConsumersLive.Show do
   @smoothing_window 5
   @timeseries_window_count 60
   defp load_metrics(consumer) do
-    default_timeseries = List.duplicate(0, @timeseries_window_count)
+    # Must be floats: the success path returns floats, and List.last/1 of this
+    # feeds Float.ceil/1, which raises on integers.
+    default_timeseries = List.duplicate(0.0, @timeseries_window_count)
 
     messages_processed_count =
       case Metrics.get_consumer_messages_processed_count(consumer) do

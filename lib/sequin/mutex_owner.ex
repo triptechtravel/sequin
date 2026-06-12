@@ -8,6 +8,12 @@ defmodule Sequin.MutexOwner do
   with exponential backoff indefinitely (capped at 1 hour) rather than crashing. This handles
   Redis/Dragonfly/KeyDB restarts without cascading failures through MutexedSupervisor.
   When Redis comes back, the MutexOwner re-acquires the mutex and resumes normal operation.
+
+  Multi-node caveat: while Redis is unreachable the mutex key expires, so another node can
+  acquire it. The stale node only discovers this on its next backoff tick (up to 1 hour after
+  a long outage), at which point it stops with :lost_mutex and its supervised children are torn
+  down. Until that tick, two nodes may both be running consumers. This is acceptable for
+  single-instance deployments; multi-node deployments should weigh this window.
   """
   use GenStateMachine
 
