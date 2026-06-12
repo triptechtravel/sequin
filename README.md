@@ -16,6 +16,25 @@
 
 </div>
 
+> [!IMPORTANT]
+> **This is an actively maintained fork of [sequinstream/sequin](https://github.com/sequinstream/sequin).**
+> Upstream has been unmaintained since February 2026, following the company's August 2025
+> acquisition and the October 2025 shutdown of Sequin Cloud. This fork is stewarded by
+> [TripTech](https://github.com/triptechtravel), which runs Sequin in production.
+>
+> **Maintenance scope** — production-driven stewardship: security fixes, crash fixes, and bugs
+> we hit operating Sequin, rather than a feature roadmap. Issues and PRs are welcome with that
+> scope in mind.
+>
+> - **Releases**: we continue from upstream's final release (v0.14.6) with `-ttN` suffixes —
+>   see [Releases](https://github.com/triptechtravel/sequin/releases) and tags. Patched branches live under `tt/*`.
+> - **Docker images**: `ghcr.io/triptechtravel/sequin` (e.g. `v0.14.6` is the pristine upstream
+>   final image; `v0.14.6-tt1` adds our fixes).
+> - **Provenance**: full clone of upstream with all branches and tags as of February 2026;
+>   upstream docs are preserved in [`docs/`](./docs). Sequin is MIT-licensed; the original
+>   [LICENSE](./LICENSE) and copyright are retained. "Sequin" is the name of the original
+>   project — this fork is unofficial and unaffiliated with the original company or its acquirer.
+
 # Sequin
 
 Sequin is the [fastest](#performance) change data capture (CDC) platform for Postgres. Sequin makes it easy to stream Postgres to streaming platforms, queues, search indexes, and more (e.g. Kafka, GCP Pub/Sub, another Postgres, etc.). You can backfill existing rows and stream new changes in real-time.
