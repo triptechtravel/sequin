@@ -1,72 +1,108 @@
 defmodule Sequin.MutexOwnerTest do
+  # These tests swap the global Sequin.Redis.RedisClient app env, so they must
+  # never run concurrently with other tests that touch Redis.
   use Sequin.Case, async: false
+  use AssertEventually, interval: 10
 
+  alias Sequin.Mutex
   alias Sequin.MutexOwner
+  alias Sequin.Redis.RedisClient
 
-  # ── Unit tests: fast, no Redis needed ──────────────────────────────
+  defmodule DownClient do
+    @moduledoc """
+    Simulates Redis being unreachable. eredis keeps its connection process alive
+    across outages and returns {:error, :no_connection} for queries, which
+    Sequin.Redis.command/2 maps to a ServiceError and Sequin.Mutex maps to :error.
+    """
+    def q(_connection, _command), do: {:error, :no_connection}
+    def qp(_connection, commands), do: Enum.map(commands, fn _ -> {:error, :no_connection} end)
+  end
 
-  describe "handle_event :keep_mutex with Redis errors" do
+  defmodule TakenClient do
+    @moduledoc "Simulates another node holding the mutex: EVAL returns the other owner's token."
+    def q(_connection, _command), do: {:ok, "another-node-token"}
+    def qp(_connection, commands), do: Enum.map(commands, fn _ -> {:ok, "another-node-token"} end)
+  end
+
+  defp swap_redis_client(client) do
+    original = Application.get_env(:sequin, RedisClient)
+    Application.put_env(:sequin, RedisClient, client)
+    on_exit(fn -> Application.put_env(:sequin, RedisClient, original) end)
+    original
+  end
+
+  defp with_redis_client(client, fun) do
+    original = Application.get_env(:sequin, RedisClient)
+    Application.put_env(:sequin, RedisClient, client)
+
+    try do
+      fun.()
+    after
+      Application.put_env(:sequin, RedisClient, original)
+    end
+  end
+
+  defp unique_key(label), do: "test:mutex_owner:#{label}:#{System.unique_integer([:positive])}"
+
+  describe "handle_event/4 {:timeout, :keep_mutex} in :has_mutex" do
     setup do
       data = %MutexOwner.State{
-        lock_expiry: 5000,
-        mutex_key: "test:mutex:unit",
-        mutex_token: "test-token",
-        on_acquired: fn -> :ok end,
-        consecutive_redis_errors: 0
+        lock_expiry: 5_000,
+        mutex_key: unique_key("handle_event"),
+        mutex_token: "test-token-#{System.unique_integer([:positive])}",
+        on_acquired: fn -> :ok end
       }
 
       {:ok, data: data}
     end
 
-    test "on success, resets consecutive_redis_errors to 0", %{data: data} do
-      # Simulate state with prior errors
-      data = %{data | consecutive_redis_errors: 3}
+    test "when Redis is unreachable, keeps state and schedules a backoff retry instead of stopping", %{data: data} do
+      with_redis_client(DownClient, fn ->
+        assert {:keep_state, new_data, [{{:timeout, :keep_mutex}, retry_ms, nil}]} =
+                 MutexOwner.handle_event({:timeout, :keep_mutex}, nil, :has_mutex, data)
 
-      # After a successful Redis call, MutexOwner should reset errors and schedule next keep
-      # The actual handle_event does: {:keep_state, %{data | consecutive_redis_errors: 0}, [keep_timeout(...)]}
-      new_data = %{data | consecutive_redis_errors: 0}
+        assert new_data.consecutive_redis_errors == 1
+        assert retry_ms == data.lock_expiry * 2
+      end)
+    end
+
+    test "backoff doubles with each consecutive error and caps at one hour", %{data: data} do
+      with_redis_client(DownClient, fn ->
+        retry_for = fn errors ->
+          data = %{data | consecutive_redis_errors: errors}
+
+          {:keep_state, new_data, [{{:timeout, :keep_mutex}, retry_ms, nil}]} =
+            MutexOwner.handle_event({:timeout, :keep_mutex}, nil, :has_mutex, data)
+
+          assert new_data.consecutive_redis_errors == errors + 1
+          retry_ms
+        end
+
+        assert retry_for.(0) == 10_000
+        assert retry_for.(1) == 20_000
+        assert retry_for.(2) == 40_000
+        assert retry_for.(30) == to_timeout(hour: 1)
+        assert retry_for.(1_000) == to_timeout(hour: 1)
+      end)
+    end
+
+    test "when the mutex is taken by another owner, stops with :lost_mutex", %{data: data} do
+      with_redis_client(TakenClient, fn ->
+        assert {:stop, {:shutdown, :lost_mutex}} =
+                 MutexOwner.handle_event({:timeout, :keep_mutex}, nil, :has_mutex, data)
+      end)
+    end
+
+    test "a successful keep resets the consecutive error count and schedules the next keep", %{data: data} do
+      data = %{data | consecutive_redis_errors: 7}
+
+      assert {:keep_state, new_data, [{{:timeout, :keep_mutex}, keep_ms, nil}]} =
+               MutexOwner.handle_event({:timeout, :keep_mutex}, nil, :has_mutex, data)
+
       assert new_data.consecutive_redis_errors == 0
-    end
+      assert keep_ms == round(data.lock_expiry * 0.80)
 
-    test "on :error, increments consecutive_redis_errors", %{data: data} do
-      errors = data.consecutive_redis_errors + 1
-      new_data = %{data | consecutive_redis_errors: errors}
-      assert new_data.consecutive_redis_errors == 1
-    end
-
-    test "retry interval uses exponential backoff capped at 1 hour", %{data: data} do
-      max_retry = to_timeout(hour: 1)
-
-      # First error: 5000 * 2^1 = 10_000ms
-      assert min(data.lock_expiry * Integer.pow(2, 1), max_retry) == 10_000
-
-      # Second error: 5000 * 2^2 = 20_000ms
-      assert min(data.lock_expiry * Integer.pow(2, 2), max_retry) == 20_000
-
-      # After many errors, caps at 1 hour
-      assert min(data.lock_expiry * Integer.pow(2, 20), max_retry) == max_retry
-    end
-
-    test "never produces a {:stop, ...} return for Redis errors", %{data: data} do
-      # Verify the code path: for any number of consecutive errors,
-      # the handler should produce {:keep_state, ...} not {:stop, ...}
-      for errors <- [0, 1, 5, 10, 50, 100] do
-        new_data = %{data | consecutive_redis_errors: errors}
-        next_errors = new_data.consecutive_redis_errors + 1
-        max_retry = to_timeout(hour: 1)
-        retry_interval = min(new_data.lock_expiry * Integer.pow(2, next_errors), max_retry)
-
-        # This is what the handler returns — no stop condition
-        assert retry_interval > 0
-        assert retry_interval <= max_retry
-      end
-    end
-
-    test "on :mutex_taken, returns stop (mutex genuinely lost)", %{data: data} do
-      # This is the only case where MutexOwner should stop
-      assert data.mutex_key == "test:mutex:unit"
-      # The handler returns {:stop, {:shutdown, :lost_mutex}} — this is correct
-      # because losing the mutex to another owner is unrecoverable
+      Mutex.release(data.mutex_key, data.mutex_token)
     end
   end
 
@@ -74,7 +110,7 @@ defmodule Sequin.MutexOwnerTest do
     test "includes consecutive_redis_errors field defaulting to 0" do
       state =
         MutexOwner.State.new(
-          mutex_key: "test:mutex:state",
+          mutex_key: unique_key("state"),
           on_acquired: fn -> :ok end
         )
 
@@ -83,84 +119,50 @@ defmodule Sequin.MutexOwnerTest do
     end
   end
 
-  # ── Integration tests: require Redis + NET_ADMIN, run with --include integration ──
-
-  # Use REJECT so TCP gets immediate ECONNREFUSED rather than hanging
-  defp block_redis do
-    System.cmd("iptables", ["-A", "OUTPUT", "-p", "tcp", "--dport", "6379", "-j", "REJECT"])
-  end
-
-  defp unblock_redis do
-    System.cmd("iptables", ["-D", "OUTPUT", "-p", "tcp", "--dport", "6379", "-j", "REJECT"], stderr_to_stdout: true)
-  end
-
-  defp unique_name, do: :"test_mutex_owner_#{System.unique_integer([:positive])}"
-
-  describe "Redis outage resilience (integration)" do
-    @describetag :integration
-    @moduletag timeout: 120_000
-
-    setup do
-      unblock_redis()
-      on_exit(fn -> unblock_redis() end)
-      :ok
-    end
-
-    test "survives Redis going down and recovers when it comes back" do
+  describe "MutexOwner process resilience to a Redis outage" do
+    test "survives the outage and re-acquires when Redis returns" do
       test_pid = self()
-      mutex_key = "test:mutex_owner:survive:#{System.unique_integer([:positive])}"
 
       {:ok, pid} =
         MutexOwner.start_link(
-          name: unique_name(),
-          mutex_key: mutex_key,
-          lock_expiry: 2000,
+          name: :"test_mutex_owner_#{System.unique_integer([:positive])}",
+          mutex_key: unique_key("outage"),
+          lock_expiry: 50,
           on_acquired: fn -> send(test_pid, :mutex_acquired) end
         )
 
-      assert_receive :mutex_acquired, 5000
+      assert_receive :mutex_acquired, 5_000
       ref = Process.monitor(pid)
 
-      # Simulate Dragonfly/Redis redeploy
-      block_redis()
-      Process.sleep(15_000)
+      # Redis goes down. Pre-fix, the next keep_mutex tick crashed the process with
+      # {:bad_return_from_state_function, {:shutdown, :err_keeping_mutex}} and the
+      # :one_for_all MutexedSupervisor cascade took down every consumer with it.
+      original = swap_redis_client(DownClient)
 
-      assert Process.alive?(pid), "MutexOwner crashed when Redis went down"
-      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}
-
-      # Bring Redis back
-      unblock_redis()
-      Process.sleep(20_000)
-
-      assert Process.alive?(pid), "MutexOwner should recover after Redis returns"
-      GenStateMachine.stop(pid, :normal)
-    end
-
-    test "never crashes regardless of how long Redis is down" do
-      test_pid = self()
-      mutex_key = "test:mutex_owner:never_crash:#{System.unique_integer([:positive])}"
-
-      {:ok, pid} =
-        MutexOwner.start_link(
-          name: unique_name(),
-          mutex_key: mutex_key,
-          lock_expiry: 1000,
-          on_acquired: fn -> send(test_pid, :mutex_acquired) end
-        )
-
-      assert_receive :mutex_acquired, 5000
-      ref = Process.monitor(pid)
-
-      block_redis()
-      Process.sleep(25_000)
-
-      assert Process.alive?(pid), "MutexOwner must never crash from Redis being unavailable"
-      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}
-
-      unblock_redis()
-      Process.sleep(10_000)
+      # Wait until the keep_mutex tick has actually failed at least once.
+      assert_eventually(
+        match?(
+          {:has_mutex, %MutexOwner.State{consecutive_redis_errors: errors}} when errors >= 1,
+          :sys.get_state(pid)
+        ),
+        5_000
+      )
 
       assert Process.alive?(pid)
+      refute_received {:DOWN, ^ref, :process, ^pid, _reason}
+
+      # Redis comes back. The held key has long expired (PX 50), so recovery must
+      # re-acquire it fresh, reset the error count, and resume normal keeps.
+      Application.put_env(:sequin, RedisClient, original)
+
+      assert_eventually(
+        match?({:has_mutex, %MutexOwner.State{consecutive_redis_errors: 0}}, :sys.get_state(pid)),
+        5_000
+      )
+
+      assert Process.alive?(pid)
+      refute_received {:DOWN, ^ref, :process, ^pid, _reason}
+
       GenStateMachine.stop(pid, :normal)
     end
   end
