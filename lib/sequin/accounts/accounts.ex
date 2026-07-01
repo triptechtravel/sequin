@@ -153,11 +153,27 @@ defmodule Sequin.Accounts do
   end
 
   @doc """
+  Gets a user by email (case-insensitive), regardless of auth provider.
+
+  Returns `nil` if no user matches.
+  """
+  def get_user_by_email_any_provider(email) when is_binary(email) do
+    normalized = String.downcase(email)
+
+    User
+    |> where([u], fragment("lower(?)", u.email) == ^normalized)
+    |> limit(1)
+    |> Repo.one()
+  end
+
+  @doc """
   Resolves the `%User{}` for a verified Cloudflare Access identity, provisioning
   one on first sign-in.
 
-  `claims` is the verified JWT claim map from `Sequin.CloudflareAccess`. New
-  users are given their own account (matching the "new account per user" model).
+  `claims` is the verified JWT claim map from `Sequin.CloudflareAccess`. An
+  existing user with the same email (under any auth provider) is adopted — so an
+  SSO login lands in that user's existing account rather than a fresh empty one.
+  Only a genuinely new email gets a new user + account.
 
   Handles the race where two concurrent requests (Sequin's LiveViews fire several
   parallel requests on first load) both try to provision the same email.
@@ -165,7 +181,7 @@ defmodule Sequin.Accounts do
   def find_or_create_cloudflare_access_user(%{"email" => email} = claims) when is_binary(email) do
     email = String.downcase(email)
 
-    case get_user_by_email(:cloudflare_access, email) do
+    case get_user_by_email_any_provider(email) do
       %User{} = user ->
         {:ok, user}
 
@@ -183,8 +199,8 @@ defmodule Sequin.Accounts do
             {:ok, user}
 
           {:error, _reason} = error ->
-            # Lost a provisioning race (or a unique-constraint clash) — re-fetch.
-            case get_user_by_email(:cloudflare_access, email) do
+            # Lost a provisioning race (or a unique-email clash) — re-fetch by email.
+            case get_user_by_email_any_provider(email) do
               %User{} = user -> {:ok, user}
               nil -> error
             end

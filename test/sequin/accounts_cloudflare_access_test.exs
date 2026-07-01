@@ -5,9 +5,24 @@ defmodule Sequin.AccountsCloudflareAccessTest do
 
   alias Sequin.Accounts
   alias Sequin.Accounts.User
+  alias Sequin.Factory.AccountsFactory
   alias Sequin.Repo
 
   describe "find_or_create_cloudflare_access_user/1" do
+    test "adopts an existing user (any provider) with the same email, keeping their account" do
+      account = AccountsFactory.insert_account!()
+      existing = AccountsFactory.insert_user!(account_id: account.id, email: "member@triptech.com")
+
+      assert {:ok, user} =
+               Accounts.find_or_create_cloudflare_access_user(%{"email" => "Member@Triptech.com", "sub" => "cf-x"})
+
+      # Same user — not a freshly provisioned one — so they keep their account/resources.
+      assert user.id == existing.id
+      assert User.current_account(user).id == account.id
+      # No new user was created.
+      assert Repo.aggregate(from(u in User, where: u.email == "member@triptech.com"), :count) == 1
+    end
+
     test "provisions a new user with their own account on first sign-in" do
       claims = %{"email" => "New.User@Triptech.com", "sub" => "cf-sub-1", "name" => "New User"}
 
