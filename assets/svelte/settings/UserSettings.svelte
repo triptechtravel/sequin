@@ -19,7 +19,20 @@
 
   let showDeleteConfirmDialog = false;
   let deleteConfirmDialogLoading = false;
-  let passwordChangeEnabled = currentUser.auth_provider === "identity";
+
+  // Any provider other than email+password is managed by an external identity
+  // provider (GitHub, or an SSO gateway like Cloudflare Access), so email and
+  // password are read-only here.
+  const externallyManaged = currentUser.auth_provider !== "identity";
+  const providerLabels: Record<string, string> = {
+    identity: "Email & password",
+    github: "GitHub",
+    cloudflare_access: "Cloudflare Access (SSO)",
+  };
+  const providerLabel =
+    providerLabels[currentUser.auth_provider] ?? currentUser.auth_provider;
+
+  let passwordChangeEnabled = !externallyManaged;
   let changePasswordLoading = false;
   let currentPassword = "";
   let newPassword = "";
@@ -94,17 +107,32 @@
   <div class="flex flex-col gap-6 container w-auto">
     <Card.Root>
       <Card.Header>
+        <Card.Title>Authentication method</Card.Title>
+      </Card.Header>
+      <Card.Content>
+        <p class="text-gray-600">{providerLabel}</p>
+        {#if externallyManaged}
+          <p class="text-sm text-gray-500 mt-1">
+            Your identity is managed by your provider. Email and password can't
+            be changed here.
+          </p>
+        {/if}
+      </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header>
         <Card.Title>Email address</Card.Title>
       </Card.Header>
       <Card.Content>
         {#if selfHosted}
-          {#if currentUser.auth_provider === "github"}
+          {#if externallyManaged}
             <Alert.Root variant="warning">
               <Alert.Description>
                 <div class="flex items-center gap-2">
                   <Info class="h-4 w-4" />
                   <p>
-                    You cannot change your email when using GitHub
+                    You cannot change your email when using {providerLabel}
                     authentication.
                   </p>
                 </div>
@@ -117,12 +145,7 @@
             >
               <div class="grid w-full items-center gap-1.5">
                 <Label for="email">Email</Label>
-                <Input
-                  type="email"
-                  id="email"
-                  bind:value={newEmail}
-                  disabled={currentUser.auth_provider === "github"}
-                />
+                <Input type="email" id="email" bind:value={newEmail} />
                 {#if changeEmailErrors.email}
                   <p class="text-sm text-destructive">
                     {changeEmailErrors.email[0]}
@@ -131,8 +154,7 @@
               </div>
               <Button
                 type="submit"
-                disabled={changeEmailLoading ||
-                  currentUser.auth_provider === "github"}
+                disabled={changeEmailLoading}
                 loading={changeEmailLoading}
               >
                 Change email
@@ -150,20 +172,20 @@
         <Card.Title>Change password</Card.Title>
       </Card.Header>
       <Card.Content>
-        {#if currentUser.auth_provider === "github"}
+        {#if externallyManaged}
           <Alert.Root variant="warning">
             <Alert.Description>
               <div class="flex items-center gap-2">
                 <Info class="h-4 w-4" />
                 <p>
-                  You cannot change your password when using GitHub
+                  You cannot change your password when using {providerLabel}
                   authentication.
                 </p>
               </div>
             </Alert.Description>
           </Alert.Root>
-        {/if}
-        <form on:submit={handleChangePassword} class="mt-4 space-y-4">
+        {:else}
+          <form on:submit={handleChangePassword} class="mt-4 space-y-4">
           <div class="grid w-full items-center gap-1.5">
             <Label for="current-password">Current password</Label>
             <Input
@@ -213,7 +235,8 @@
           >
             Change password
           </Button>
-        </form>
+          </form>
+        {/if}
       </Card.Content>
     </Card.Root>
 

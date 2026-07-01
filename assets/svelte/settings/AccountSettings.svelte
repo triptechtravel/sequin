@@ -37,7 +37,16 @@
     id: string;
     name: string;
     email: string;
+    auth_provider?: string;
   }
+
+  const authProviderLabels: Record<string, string> = {
+    identity: "Password",
+    github: "GitHub",
+    cloudflare_access: "SSO",
+  };
+  const authProviderLabel = (provider?: string) =>
+    (provider && authProviderLabels[provider]) || provider || "—";
 
   interface PendingInvite {
     id: string;
@@ -376,6 +385,7 @@
           <Table.Row>
             <Table.Head>Name</Table.Head>
             <Table.Head>Email</Table.Head>
+            <Table.Head>Auth</Table.Head>
             <Table.Head />
           </Table.Row>
         </Table.Header>
@@ -393,6 +403,13 @@
                     >
                   {/if}
                 </div>
+              </Table.Cell>
+              <Table.Cell>
+                <span
+                  class="text-xs text-muted bg-gray-200 rounded-full px-2 py-1"
+                >
+                  {authProviderLabel(user.auth_provider)}
+                </span>
               </Table.Cell>
               <Table.Cell class="flex justify-end">
                 <DropdownMenu>
