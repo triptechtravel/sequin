@@ -320,6 +320,15 @@ if config_env() == :prod do
       client_secret: get_env.("GITHUB_CLIENT_SECRET")
     ]
 
+  # Cloudflare Access (trusted-header) authentication. When enabled, users are
+  # transparently provisioned from the verified Access JWT and never see the
+  # Sequin sign-in screen. `CF_ACCESS_AUD` is the Access application's Audience
+  # (AUD) tag; `CF_ACCESS_TEAM_DOMAIN` is https://<team>.cloudflareaccess.com.
+  config :sequin, Sequin.CloudflareAccess,
+    enabled: System.get_env("CF_ACCESS_ENABLED", "false") in enabled_feature_values,
+    team_domain: System.get_env("CF_ACCESS_TEAM_DOMAIN"),
+    audience: System.get_env("CF_ACCESS_AUD")
+
   config :sequin, :incident_io_api_key, System.get_env("INCIDENT_IO_API_KEY")
   config :sequin, :retool_workflow_key, System.get_env("RETOOL_WORKFLOW_KEY")
 

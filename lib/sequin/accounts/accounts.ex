@@ -152,6 +152,48 @@ defmodule Sequin.Accounts do
     end)
   end
 
+  @doc """
+  Resolves the `%User{}` for a verified Cloudflare Access identity, provisioning
+  one on first sign-in.
+
+  `claims` is the verified JWT claim map from `Sequin.CloudflareAccess`. New
+  users are given their own account (matching the "new account per user" model).
+
+  Handles the race where two concurrent requests (Sequin's LiveViews fire several
+  parallel requests on first load) both try to provision the same email.
+  """
+  def find_or_create_cloudflare_access_user(%{"email" => email} = claims) when is_binary(email) do
+    email = String.downcase(email)
+
+    case get_user_by_email(:cloudflare_access, email) do
+      %User{} = user ->
+        {:ok, user}
+
+      nil ->
+        attrs = %{
+          email: email,
+          name: claims["name"] || email,
+          # The constraint requires auth_provider_id for non-identity providers;
+          # Cloudflare's `sub` is the stable per-user id, falling back to email.
+          auth_provider_id: claims["sub"] || email
+        }
+
+        case register_user(:cloudflare_access, attrs) do
+          {:ok, user} ->
+            {:ok, user}
+
+          {:error, _reason} = error ->
+            # Lost a provisioning race (or a unique-constraint clash) — re-fetch.
+            case get_user_by_email(:cloudflare_access, email) do
+              %User{} = user -> {:ok, user}
+              nil -> error
+            end
+        end
+    end
+  end
+
+  def find_or_create_cloudflare_access_user(_claims), do: {:error, Error.unauthorized(message: "Missing email claim")}
+
   defp broadcast_signup(user, account) do
     # Record "User Signed Up" event in PostHog
     Posthog.capture("User Signed Up", %{

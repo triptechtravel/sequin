@@ -5,6 +5,7 @@ defmodule SequinWeb.Router do
   import SequinWeb.UserAuth
 
   alias SequinWeb.Plugs.AssignCurrentPath
+  alias SequinWeb.Plugs.CloudflareAccess
   alias SequinWeb.Plugs.VerifyApiToken
   alias SequinWeb.Plugs.VerifyContentType
 
@@ -18,6 +19,7 @@ defmodule SequinWeb.Router do
     plug(:protect_from_forgery)
     plug(:put_secure_browser_headers)
     plug(AssignCurrentPath)
+    plug(CloudflareAccess)
     plug(:fetch_current_user)
   end
 
