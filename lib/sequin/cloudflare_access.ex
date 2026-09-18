@@ -29,7 +29,7 @@ defmodule Sequin.CloudflareAccess do
 
   @certs_path "/cdn-cgi/access/certs"
   @allowed_algs ["RS256"]
-  @refetch_cooldown_ms :timer.minutes(5)
+  @refetch_cooldown_ms to_timeout(minute: 5)
   # Allow a little clock skew when checking not-before.
   @clock_skew_seconds 5
 
@@ -134,7 +134,7 @@ defmodule Sequin.CloudflareAccess do
 
   defp validate_claims(claims, cfg) do
     now = System.system_time(:second)
-    issuer = cfg[:team_domain] |> String.trim_trailing("/")
+    issuer = String.trim_trailing(cfg[:team_domain], "/")
     audience = cfg[:audience]
 
     cond do
@@ -187,7 +187,7 @@ defmodule Sequin.CloudflareAccess do
   end
 
   defp certs_url do
-    (config()[:team_domain] |> String.trim_trailing("/")) <> @certs_path
+    String.trim_trailing(config()[:team_domain], "/") <> @certs_path
   end
 
   defp to_key_map(jwk_maps) do

@@ -296,6 +296,15 @@ if config_env() == :prod do
   datadog_api_key = get_env.("DATADOG_API_KEY")
   datadog_app_key = get_env.("DATADOG_APP_KEY")
 
+  # Cloudflare Access (trusted-header) authentication. When enabled, users are
+  # transparently provisioned from the verified Access JWT and never see the
+  # Sequin sign-in screen. `CF_ACCESS_AUD` is the Access application's Audience
+  # (AUD) tag; `CF_ACCESS_TEAM_DOMAIN` is https://<team>.cloudflareaccess.com.
+  config :sequin, Sequin.CloudflareAccess,
+    enabled: System.get_env("CF_ACCESS_ENABLED", "false") in enabled_feature_values,
+    team_domain: System.get_env("CF_ACCESS_TEAM_DOMAIN"),
+    audience: System.get_env("CF_ACCESS_AUD")
+
   config :sequin, Sequin.Mailer, adapter: Sequin.Swoosh.Adapters.Loops, api_key: System.get_env("LOOPS_API_KEY")
   config :sequin, Sequin.Redis, ConfigParser.redis_config(env_vars)
 
@@ -319,15 +328,6 @@ if config_env() == :prod do
       client_id: get_env.("GITHUB_CLIENT_ID"),
       client_secret: get_env.("GITHUB_CLIENT_SECRET")
     ]
-
-  # Cloudflare Access (trusted-header) authentication. When enabled, users are
-  # transparently provisioned from the verified Access JWT and never see the
-  # Sequin sign-in screen. `CF_ACCESS_AUD` is the Access application's Audience
-  # (AUD) tag; `CF_ACCESS_TEAM_DOMAIN` is https://<team>.cloudflareaccess.com.
-  config :sequin, Sequin.CloudflareAccess,
-    enabled: System.get_env("CF_ACCESS_ENABLED", "false") in enabled_feature_values,
-    team_domain: System.get_env("CF_ACCESS_TEAM_DOMAIN"),
-    audience: System.get_env("CF_ACCESS_AUD")
 
   config :sequin, :incident_io_api_key, System.get_env("INCIDENT_IO_API_KEY")
   config :sequin, :retool_workflow_key, System.get_env("RETOOL_WORKFLOW_KEY")

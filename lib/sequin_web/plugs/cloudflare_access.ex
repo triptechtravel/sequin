@@ -13,11 +13,11 @@ defmodule SequinWeb.Plugs.CloudflareAccess do
   """
   import Plug.Conn
 
-  require Logger
-
   alias Sequin.Accounts
   alias Sequin.CloudflareAccess
   alias SequinWeb.UserAuth
+
+  require Logger
 
   @header "cf-access-jwt-assertion"
 

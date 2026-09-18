@@ -18,7 +18,9 @@ defmodule Sequin.CloudflareAccessTest do
     )
 
     on_exit(fn ->
-      if prev, do: Application.put_env(:sequin, CloudflareAccess, prev), else: Application.delete_env(:sequin, CloudflareAccess)
+      if prev,
+        do: Application.put_env(:sequin, CloudflareAccess, prev),
+        else: Application.delete_env(:sequin, CloudflareAccess)
     end)
 
     start_supervised!(CloudflareAccess)
@@ -61,7 +63,7 @@ defmodule Sequin.CloudflareAccessTest do
     end
 
     test "rejects a token missing the email claim", %{jwk: jwk, kid: kid} do
-      token = sign(jwk, kid, claims() |> Map.delete("email"))
+      token = sign(jwk, kid, Map.delete(claims(), "email"))
       assert {:error, :missing_email} = CloudflareAccess.verify_token(token)
     end
 
