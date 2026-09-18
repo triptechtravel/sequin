@@ -92,29 +92,13 @@ defmodule Sequin.Redis do
   def command(command, opts \\ []) do
     maybe_time(command, opts[:query_name], fn ->
       res =
-        connection()
-        |> redis_client().q(command)
+        fn client, connection -> client.q(connection, command) end
+        |> with_client()
         |> parse_result()
 
       case res do
-        {:ok, result} ->
-          {:ok, result}
-
-        {:error, :no_connection} ->
-          {:error,
-           Error.service(
-             service: :redis,
-             code: "no_connection",
-             message: "No connection to Redis"
-           )}
-
-        {:error, :timeout} ->
-          {:error, Error.service(service: :redis, code: :timeout, message: "Timeout connecting to Redis")}
-
-        {:error, error} when is_binary(error) or is_atom(error) ->
-          Logger.error("Redis command failed: #{error}", error: error)
-
-          {:error, Error.service(service: :redis, code: :command_failed, message: to_string(error))}
+        {:ok, result} -> {:ok, result}
+        {:error, error} -> {:error, to_service_error(error)}
       end
     end)
   end
@@ -122,17 +106,10 @@ defmodule Sequin.Redis do
   @spec command!(command(), [opt]) :: redis_value()
         when opt: command_opt()
   def command!(command, opts \\ []) do
-    maybe_time(command, opts[:query_name], fn ->
-      res = connection() |> redis_client().q(command) |> parse_result()
-
-      case res do
-        {:ok, result} ->
-          result
-
-        {:error, error} ->
-          raise Error.service(service: :redis, code: :command_failed, message: error)
-      end
-    end)
+    case command(command, opts) do
+      {:ok, result} -> result
+      {:error, error} -> raise error
+    end
   end
 
   @spec pipeline([command()], [opt]) ::
@@ -140,7 +117,7 @@ defmodule Sequin.Redis do
         when opt: command_opt()
   def pipeline(commands, opts \\ []) do
     maybe_time(commands, opts[:query_name], fn ->
-      case redis_client().qp(connection(), commands) do
+      case with_client(fn client, connection -> client.qp(connection, commands) end) do
         results when is_list(results) ->
           # Convert eredis results to Redix-style results
           {:ok,
@@ -155,15 +132,36 @@ defmodule Sequin.Redis do
                Error.service(service: :redis, code: :command_failed, message: error)
            end)}
 
-        {:error, :no_connection} ->
-          {:error,
-           Error.service(
-             service: :redis,
-             code: "no_connection",
-             message: "No connection to Redis"
-           )}
+        {:error, error} ->
+          {:error, to_service_error(error)}
       end
     end)
+  end
+
+  # Every Redis call goes through here. Besides `{:error, _}` tuples, the cluster client can also *exit* the
+  # calling process: when Redis is unreachable, eredis_cluster refreshes its slot map with a blocking
+  # `gen_server:call` that times out. Callers should see that as an ordinary "no connection" error rather
+  # than dying (which is how a Dragonfly restart previously took down sink pipelines).
+  defp with_client(fun) do
+    fun.(redis_client(), connection())
+  catch
+    :exit, reason ->
+      Logger.warning("[Redis] Client exited while running command: #{inspect(reason)}", reason: reason)
+      {:error, :no_connection}
+  end
+
+  defp to_service_error(:no_connection) do
+    Error.service(service: :redis, code: "no_connection", message: "No connection to Redis")
+  end
+
+  defp to_service_error(:timeout) do
+    Error.service(service: :redis, code: :timeout, message: "Timeout connecting to Redis")
+  end
+
+  defp to_service_error(error) when is_binary(error) or is_atom(error) do
+    Logger.error("Redis command failed: #{error}", error: error)
+
+    Error.service(service: :redis, code: :command_failed, message: to_string(error))
   end
 
   defp parse_result({:ok, :undefined}), do: {:ok, nil}

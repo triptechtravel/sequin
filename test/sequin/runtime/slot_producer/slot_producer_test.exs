@@ -24,6 +24,7 @@ defmodule Sequin.Runtime.SlotProducerTest do
   alias Sequin.Test.UnboxedRepo
   alias Sequin.TestSupport.Models.Character
   alias Sequin.TestSupport.Models.TestEventLogPartitioned
+  alias Sequin.TestSupport.RedisOutage
   alias Sequin.TestSupport.ReplicationSlots
 
   @moduletag :unboxed
@@ -244,6 +245,86 @@ defmodule Sequin.Runtime.SlotProducerTest do
 
       assert next_commit_lsn > init_lsn
       assert_eventually {:ok, ^next_commit_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot()), 1000
+    end
+
+    @tag skip_start: true, capture_log: true
+    test "survives a Redis outage while persisting the restart cursor", %{db: db, slot: slot} do
+      # Reproduces the 2026-09-16 incident: a Dragonfly restart made every Redis call return
+      # {:error, :no_connection} for ~20s. SlotProducer's :update_restart_wal_cursor timer fired during
+      # that window, persisting the cursor raised, and the crash cancelled every
+      # downstream processor — tearing down the whole replication pipeline.
+      {:ok, init_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot())
+      {:ok, agent} = Agent.start_link(fn -> %{commit_lsn: init_lsn, commit_idx: 0} end)
+
+      {producer_pid, _consumer_pid} =
+        start_slot_producer(slot,
+          ack_interval: 1,
+          restart_wal_cursor_update_interval: 1,
+          restart_wal_cursor_fn: fn _, _ -> Agent.get(agent, & &1) end
+        )
+
+      ref = Process.monitor(producer_pid)
+
+      # Pipeline is up and streaming before Redis goes away
+      CharacterFactory.insert_character!(%{}, repo: UnboxedRepo)
+      [msg] = receive_messages(1)
+      Agent.update(agent, fn _ -> %{commit_lsn: msg.commit_lsn, commit_idx: 1} end)
+      assert_eventually {:ok, %{commit_lsn: _}} = Replication.restart_wal_cursor(slot.id), 1000
+
+      RedisOutage.with_outage(:no_connection, fn ->
+        # Let several cursor-update ticks fire while Redis is unreachable
+        refute_receive {:DOWN, ^ref, :process, ^producer_pid, _reason}, 200
+
+        # Replication must keep flowing during the outage
+        CharacterFactory.insert_character!(%{}, repo: UnboxedRepo)
+        [msg] = receive_messages(1)
+        Agent.update(agent, fn _ -> %{commit_lsn: msg.commit_lsn, commit_idx: 1} end)
+
+        refute_receive {:DOWN, ^ref, :process, ^producer_pid, _reason}, 200
+        assert Process.alive?(producer_pid)
+      end)
+
+      # Once Redis is back, the cursor is persisted and the slot is acked
+      CharacterFactory.insert_character!(%{}, repo: UnboxedRepo)
+      [msg] = receive_messages(1)
+      next_commit_lsn = msg.commit_lsn
+      Agent.update(agent, fn _ -> %{commit_lsn: next_commit_lsn, commit_idx: 1} end)
+
+      assert_eventually {:ok, %{commit_lsn: ^next_commit_lsn, commit_idx: 1}} = Replication.restart_wal_cursor(slot.id),
+                        1000
+
+      assert_eventually {:ok, ^next_commit_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot()), 1000
+      refute_received {:DOWN, ^ref, :process, ^producer_pid, _reason}
+    end
+
+    @tag skip_start: true, capture_log: true
+    test "survives the Redis cluster client exiting the caller", %{db: db, slot: slot} do
+      # eredis_cluster refreshes its slot map with a blocking gen_server call; when Redis is unreachable that
+      # call times out and *exits the calling process*. Sequin.Redis must turn that into an error tuple.
+      {:ok, init_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot())
+      {:ok, agent} = Agent.start_link(fn -> %{commit_lsn: init_lsn, commit_idx: 0} end)
+
+      {producer_pid, _consumer_pid} =
+        start_slot_producer(slot,
+          ack_interval: 1,
+          restart_wal_cursor_update_interval: 1,
+          restart_wal_cursor_fn: fn _, _ -> Agent.get(agent, & &1) end
+        )
+
+      ref = Process.monitor(producer_pid)
+
+      CharacterFactory.insert_character!(%{}, repo: UnboxedRepo)
+      [_msg] = receive_messages(1)
+
+      RedisOutage.with_outage(:exit, fn ->
+        refute_receive {:DOWN, ^ref, :process, ^producer_pid, _reason}, 200
+
+        CharacterFactory.insert_character!(%{}, repo: UnboxedRepo)
+        [_msg] = receive_messages(1)
+        assert Process.alive?(producer_pid)
+      end)
+
+      refute_received {:DOWN, ^ref, :process, ^producer_pid, _reason}
     end
 
     test "logical messages flow through", %{db: db} do

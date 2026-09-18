@@ -167,10 +167,21 @@ defmodule Sequin.Replication do
   end
 
   # Replication runtime lifecycle
-  @spec put_restart_wal_cursor!(replication_slot_id :: String.t(), wal_cursor :: wal_cursor()) ::
-          Redis.redis_value()
-  def put_restart_wal_cursor!(replication_slot_id, %{commit_lsn: lsn, commit_idx: idx}) do
-    Redis.command!(["SET", restart_wal_cursor_key(replication_slot_id), "#{lsn}:#{idx}"])
+  @spec put_restart_wal_cursor(replication_slot_id :: String.t(), wal_cursor :: wal_cursor()) ::
+          :ok | {:error, Error.t()}
+  def put_restart_wal_cursor(replication_slot_id, %{commit_lsn: lsn, commit_idx: idx}) do
+    case Redis.command(["SET", restart_wal_cursor_key(replication_slot_id), "#{lsn}:#{idx}"]) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  @spec put_restart_wal_cursor!(replication_slot_id :: String.t(), wal_cursor :: wal_cursor()) :: :ok
+  def put_restart_wal_cursor!(replication_slot_id, wal_cursor) do
+    case put_restart_wal_cursor(replication_slot_id, wal_cursor) do
+      :ok -> :ok
+      {:error, error} -> raise error
+    end
   end
 
   @spec restart_wal_cursor(replication_slot_id :: String.t()) :: {:ok, wal_cursor()} | {:error, Error.t()}
