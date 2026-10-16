@@ -23,6 +23,10 @@ defmodule Sequin.Postgres.ArrayLexerTest do
       assert {:ok, [nil, "hello", "42"]} = ArrayLexer.lex("{NULL,\"hello\",42}")
     end
 
+    test "keeps a quoted \"NULL\" as a string" do
+      assert {:ok, [nil, "NULL", "null"]} = ArrayLexer.lex(~s({NULL,"NULL",null}))
+    end
+
     test "parses array with empty strings" do
       assert {:ok, ["", "x", ""]} = ArrayLexer.lex(~s({"","x",""}))
     end

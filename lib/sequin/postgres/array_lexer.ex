@@ -3,7 +3,7 @@ defmodule Sequin.Postgres.ArrayLexer do
   Lexer for Postgres array literals.
 
   * **Splits only** – every scalar comes back as a *string* (or `nil` for the
-    literal `NULL`). No JSON decoding or type‑casting takes place here.
+    unquoted literal `NULL`; a quoted `"NULL"` is the string). No JSON decoding or type‑casting takes place here.
   * **Nesting preserved** – any inner arrays are returned as nested Elixir
     lists.
   * **Return contract** – always `{:ok, result}` on success or
@@ -22,6 +22,9 @@ defmodule Sequin.Postgres.ArrayLexer do
 
       iex> Sequin.Postgres.ArrayLexer.lex("{{1,2},{3,4}}")
       {:ok, [["1", "2"], ["3", "4"]]}
+
+      iex> Sequin.Postgres.ArrayLexer.lex(~s({NULL,"NULL"}))
+      {:ok, [nil, "NULL"]}
   """
   alias Sequin.Error
 
@@ -79,7 +82,8 @@ defmodule Sequin.Postgres.ArrayLexer do
   # we just read { or a comma and the next non‑whitespace character is "
   defp parse_items(<<"\"", rest::binary>>, acc, nil) do
     with {:ok, value, rest2} <- parse_quoted(rest) do
-      parse_items(rest2, acc, value)
+      # Tagged so a quoted "NULL" stays the string "NULL"
+      parse_items(rest2, acc, {:quoted, value})
     end
   end
 
@@ -116,6 +120,8 @@ defmodule Sequin.Postgres.ArrayLexer do
   # Adds the finished buffer (if any) to the accumulator.
   # no element captured
   defp put_buf(nil, acc), do: acc
+
+  defp put_buf({:quoted, value}, acc), do: [value | acc]
 
   defp put_buf(buf, acc) when is_binary(buf) do
     elem =

@@ -132,6 +132,20 @@ defmodule Sequin.Postgres.ValueCasterTest do
   end
 
   # ---------------------------------------------------------------------------
+  describe "times" do
+    test "time keeps microseconds" do
+      assert {:ok, ~T[13:45:30.123456]} = ValueCaster.cast("time", "13:45:30.123456")
+      assert {:ok, ~T[13:45:30.000000]} = ValueCaster.cast("time", "13:45:30")
+    end
+
+    test "timetz is normalized to UTC" do
+      assert {:ok, ~T[08:15:30.000000]} = ValueCaster.cast("timetz", "13:45:30+05:30")
+      assert {:ok, ~T[16:45:30.500000]} = ValueCaster.cast("timetz", "13:45:30.5-03")
+      assert {:ok, ~T[23:30:00.000000]} = ValueCaster.cast("timetz", "00:30:00+01")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   describe "fallback & unknown types" do
     test "unknown pg type ⇒ string passthrough" do
       assert {:ok, "whatever"} = ValueCaster.cast("mystery", "whatever")

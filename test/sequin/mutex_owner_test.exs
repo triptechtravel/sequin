@@ -8,6 +8,9 @@ defmodule Sequin.MutexOwnerTest do
   alias Sequin.MutexOwner
   alias Sequin.Redis.RedisClient
 
+  # The tests simulate Redis outages, which MutexOwner (rightly) logs loudly
+  @moduletag :capture_log
+
   defmodule DownClient do
     @moduledoc """
     Simulates Redis being unreachable. eredis keeps its connection process alive
