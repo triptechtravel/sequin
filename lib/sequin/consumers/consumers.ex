@@ -780,7 +780,8 @@ defmodule Sequin.Consumers do
         "timestamp with time zone" -> with {:ok, dt, _offset} <- DateTime.from_iso8601(value), do: {:ok, dt}
         "timestamp" <> _ -> NaiveDateTime.from_iso8601(value)
         "date" -> Date.from_iso8601(value)
-        "time" <> _ -> Elixir.Time.from_iso8601(value)
+        # timetz stays text, as live messages carry it
+        type when type in ["time", "time without time zone"] -> Elixir.Time.from_iso8601(value)
         "numeric" -> Decimal.parse(value)
         _ -> :error
       end
