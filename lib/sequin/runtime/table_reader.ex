@@ -16,6 +16,8 @@ defmodule Sequin.Runtime.TableReader do
 
   require Logger
 
+  @record_pks_column "__sequin_record_pks"
+
   @type batch_id :: String.t()
 
   @type primary_key_list :: [[String.t()]]
@@ -181,13 +183,9 @@ defmodule Sequin.Runtime.TableReader do
           {:ok, %{pks: [], next_cursor: nil}}
 
         %Postgrex.Result{} = result ->
-          rows = Postgres.result_to_maps(result)
-          rows = Postgres.load_rows(table, rows)
-
-          primary_key_rows =
-            Enum.map(rows, fn row ->
-              primary_key_columns |> Enum.map(fn column -> Map.fetch!(row, column.name) end) |> Enum.map(&to_string/1)
-            end)
+          raw_rows = Postgres.result_to_maps(result)
+          rows = Postgres.load_rows(table, raw_rows)
+          primary_key_rows = Enum.map(raw_rows, &Map.fetch!(&1, @record_pks_column))
 
           last_row = List.last(rows)
 
@@ -234,8 +232,8 @@ defmodule Sequin.Runtime.TableReader do
         {:ok, %{messages: [], next_cursor: nil}}
 
       {:ok, %Postgrex.Result{} = result} ->
-        rows = Postgres.result_to_maps(result)
-        rows = Postgres.load_rows(table, rows)
+        raw_rows = Postgres.result_to_maps(result)
+        rows = Postgres.load_rows(table, raw_rows)
 
         last_row = List.last(rows)
 
@@ -248,7 +246,9 @@ defmodule Sequin.Runtime.TableReader do
         messages =
           table
           |> records_by_column_attnum(rows)
-          |> Enum.map(&message_from_row(consumer, backfill, table, &1))
+          |> Enum.zip_with(raw_rows, fn record, raw_row ->
+            message_from_row(consumer, backfill, table, record, Map.fetch!(raw_row, @record_pks_column))
+          end)
 
         {:ok, %{messages: messages, next_cursor: next_cursor}}
 
@@ -268,7 +268,7 @@ defmodule Sequin.Runtime.TableReader do
     select_only_pk_and_cursor_columns = Keyword.get(opts, :select_only_pk_and_cursor_columns, false)
 
     order_by = KeysetCursor.order_by_sql(table)
-    min_where_clause = KeysetCursor.where_sql(table, if(include_min, do: ">=", else: ">"))
+    min_where_clause = KeysetCursor.where_sql(table, if(include_min, do: ">=", else: ">"), min_cursor)
     cursor_values = KeysetCursor.casted_cursor_values(table, min_cursor)
 
     # Get the select columns based on the option
@@ -284,7 +284,7 @@ defmodule Sequin.Runtime.TableReader do
       end
 
     sql = """
-    select #{select_columns}
+    select #{select_columns}, #{record_pks_sql(table)}
     from #{Postgres.quote_name(table.schema, table.name)}
     where #{min_where_clause}
     order by #{order_by}
@@ -333,7 +333,7 @@ defmodule Sequin.Runtime.TableReader do
   def fast_count_estimate(%PostgresDatabase{} = db, %PostgresDatabaseTable{} = table, min_cursor, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, to_timeout(minute: 1))
     include_min = Keyword.get(opts, :include_min, false)
-    min_where_clause = KeysetCursor.where_sql(table, if(include_min, do: ">=", else: ">"))
+    min_where_clause = KeysetCursor.where_sql(table, if(include_min, do: ">=", else: ">"), min_cursor)
     cursor_values = KeysetCursor.casted_cursor_values(table, min_cursor)
 
     sql = """
@@ -378,9 +378,14 @@ defmodule Sequin.Runtime.TableReader do
     end
   end
 
-  defp message_from_row(%SinkConsumer{} = consumer, %Backfill{} = backfill, %PostgresDatabaseTable{} = table, record) do
+  defp message_from_row(
+         %SinkConsumer{} = consumer,
+         %Backfill{} = backfill,
+         %PostgresDatabaseTable{} = table,
+         record,
+         record_pks
+       ) do
     db = consumer.replication_slot.postgres_database
-    record_pks = record_pks(table, record)
 
     message =
       %Message{
@@ -408,12 +413,20 @@ defmodule Sequin.Runtime.TableReader do
     Consumers.consumer_message(consumer, db, message)
   end
 
-  defp record_pks(%PostgresDatabaseTable{} = table, record_attnums_to_values) do
-    table.columns
-    |> Enum.filter(& &1.is_pk?)
-    |> Enum.sort_by(& &1.attnum)
-    |> Enum.map(&Map.fetch!(record_attnums_to_values, &1.attnum))
-    |> Enum.map(&to_string/1)
+  # Replication identifies a row by its key columns' Postgres text (see
+  # Processor.data_tuple_to_ids/2). Selecting the same text, rather than formatting decoded
+  # values, keeps backfilled and replicated messages for a row in the same group, so they're
+  # ordered and deduplicated against each other. E.g. Elixir renders a timestamp of
+  # 13:45:30.5 as "13:45:30.500000" and a boolean as "true", where Postgres says
+  # "13:45:30.5" and "t".
+  defp record_pks_sql(%PostgresDatabaseTable{} = table) do
+    pks =
+      table.columns
+      |> Enum.filter(& &1.is_pk?)
+      |> Enum.sort_by(& &1.attnum)
+      |> Enum.map_join(", ", &"format('%s', #{Postgres.quote_name(&1.name)})")
+
+    "array[#{pks}]::text[] as #{Postgres.quote_name(@record_pks_column)}"
   end
 
   defp records_by_column_attnum(%PostgresDatabaseTable{} = table, records) do

@@ -28,6 +28,7 @@ defmodule Sequin.PostgresReplicationTest do
   alias Sequin.Replication
   alias Sequin.Replication.PostgresReplicationSlot
   alias Sequin.Runtime
+  alias Sequin.Runtime.KeysetCursor
   alias Sequin.Runtime.MessageHandlerMock
   alias Sequin.Runtime.SinkPipeline
   alias Sequin.Runtime.SlotMessageStore
@@ -1427,14 +1428,15 @@ defmodule Sequin.PostgresReplicationTest do
     end
   end
 
-  describe "backfill and replication parity across column types" do
-    setup do
+  describe "backfill and replication parity" do
+    setup ctx do
       account_id = AccountsFactory.insert_account!().id
       source_db = DatabasesFactory.insert_configured_postgres_database!(account_id: account_id, pg_major_version: 17)
       ConnectionCache.cache_connection(source_db, UnboxedRepo)
 
       {:ok, tables} = Databases.tables(source_db)
-      table = Sequin.Enum.find!(tables, &(&1.name == "all_column_types"))
+      table_name = ctx[:table] || "all_column_types"
+      table = Sequin.Enum.find!(tables, &(&1.name == table_name))
       attnums = Map.new(table.columns, &{&1.name, &1.attnum})
       table = %{table | sort_column_attnum: attnums["updated_at"]}
 
@@ -1455,7 +1457,10 @@ defmodule Sequin.PostgresReplicationTest do
           replication_slot_id: pg_replication.id,
           account_id: account_id,
           source_tables: [
-            ConsumersFactory.source_table_attrs(table_oid: table.oid, group_column_attnums: [attnums["id"]])
+            ConsumersFactory.source_table_attrs(
+              table_oid: table.oid,
+              group_column_attnums: table.columns |> Enum.filter(& &1.is_pk?) |> Enum.map(& &1.attnum)
+            )
           ]
         )
 
@@ -1467,7 +1472,7 @@ defmodule Sequin.PostgresReplicationTest do
           sink_consumer_id: consumer.id,
           table_oid: table.oid,
           sort_column_attnum: table.sort_column_attnum,
-          initial_min_cursor: %{table.sort_column_attnum => ~N[1970-01-01 00:00:00], attnums["id"] => 0}
+          initial_min_cursor: KeysetCursor.min_cursor(table, ~N[1970-01-01 00:00:00])
         )
 
       sup = Module.concat(__MODULE__, Runtime.Supervisor)
@@ -1556,6 +1561,39 @@ defmodule Sequin.PostgresReplicationTest do
       """
 
       for record <- Map.values(streamed) ++ Map.values(backfilled), do: Jason.encode!(record)
+    end
+
+    @tag table: "pk_types"
+    test "a backfilled row has the same identity as the same row streamed from the WAL", ctx do
+      UnboxedRepo.query!(~S"""
+      insert into pk_types (pk_timestamp, pk_timestamptz, pk_bool, pk_numeric, name)
+      values ('2024-02-29 13:45:30.5', '2024-02-29 13:45:30+00', true, 0.00000001, 'Frodo')
+      """)
+
+      [streamed] = receive_messages(ctx.consumer, 1)
+
+      {:ok, %{messages: [backfilled]}} =
+        TableReader.fetch_batch(
+          ctx.source_db,
+          ctx.consumer,
+          ctx.backfill,
+          ctx.table,
+          ctx.backfill.initial_min_cursor,
+          include_min: true
+        )
+
+      {:ok, %{pks: pks}} =
+        TableReader.fetch_batch_pks(ctx.source_db, ctx.table, ctx.backfill.initial_min_cursor, include_min: true)
+
+      # The WAL side uses Postgres's text for each key column
+      assert streamed.record_pks == ["2024-02-29 13:45:30.5", "2024-02-29 13:45:30+00", "t", "0.00000001"]
+
+      # Backfilled messages are only emitted if fetch_batch_pks/4 found the same key
+      assert pks == [streamed.record_pks]
+      assert backfilled.record_pks == streamed.record_pks
+      # Conflict detection and ordering between backfill and CDC key off the group
+      assert backfilled.group_id == streamed.group_id
+      assert backfilled.data.record == streamed.data.record
     end
   end
 

@@ -197,6 +197,23 @@ defmodule Sequin.TableReaderTest do
       assert next_cursor[table.sort_column_attnum] == char3.updated_at
     end
 
+    test "starting from the min cursor includes rows with negative primary keys", %{
+      db: db,
+      backfill: backfill,
+      characters_table: table,
+      character_consumer: consumer
+    } do
+      table = %{table | sort_column_attnum: nil}
+      character = CharacterFactory.insert_character!()
+      Repo.query!(~s{update "Characters" set id = -5 where id = $1}, [character.id])
+
+      {:ok, %{messages: [message]}} =
+        TableReader.fetch_batch(db, consumer, backfill, table, KeysetCursor.min_cursor(table), include_min: true)
+
+      assert message.data.record["id"] == -5
+      assert message.record_pks == ["-5"]
+    end
+
     test "works with nil sort column", %{
       db: db,
       backfill: backfill,

@@ -75,33 +75,36 @@ defmodule Sequin.Runtime.KeysetCursor do
     min_cursor(table, sort_col_value)
   end
 
-  # Return the lexographically smallest value for the given type
-  def min_for_type("uuid"), do: "00000000-0000-0000-0000-000000000000"
-  def min_for_type("timestamp"), do: ~N[0001-01-01 00:00:00]
-  def min_for_type("timestamp without time zone"), do: ~N[0001-01-01 00:00:00]
-  def min_for_type("timestamp with time zone"), do: ~U[0001-01-01 00:00:00Z]
-  def min_for_type("date"), do: ~D[0001-01-01]
-  def min_for_type("time"), do: ~T[00:00:00]
-  def min_for_type("time without time zone"), do: ~T[00:00:00]
-  def min_for_type("time with time zone"), do: ~T[00:00:00]
+  # nil means "unbounded": no value of any type is guessed as the minimum (0 isn't one for integers,
+  # and many types have none that can be passed as a parameter). where_sql/3 and
+  # casted_cursor_values/2 compare only the bounded prefix of a cursor.
+  def min_for_type(_type), do: nil
 
-  def min_for_type(numeric_type)
-      when numeric_type in ["smallint", "integer", "bigint", "decimal", "numeric", "real", "double precision"], do: 0
+  @spec where_sql(Table.t(), String.t(), map() | nil) :: String.t()
+  def where_sql(%Table{} = table, operator, cursor \\ nil) do
+    columns = bounded_columns(table, cursor)
 
-  def min_for_type(_), do: ""
+    if columns == [] do
+      "true"
+    else
+      quoted_columns = columns |> quoted_column_names() |> Enum.join(", ")
+      rhs = "(#{Enum.map_join(1..Enum.count(columns), ", ", fn _ -> "?" end)})"
 
-  @spec where_sql(Table.t(), String.t()) :: String.t()
-  def where_sql(%Table{} = table, operator) do
-    columns = cursor_columns(table)
+      # (a, b) > (x, <unbounded>) is a >= x, as nothing sorts before an unbounded b
+      operator =
+        if length(columns) < length(cursor_columns(table)),
+          do: Map.get(%{">" => ">=", "<" => "<="}, operator, operator),
+          else: operator
 
-    quoted_columns =
-      columns
-      |> quoted_column_names()
-      |> Enum.join(", ")
+      "(#{quoted_columns}) #{operator} #{rhs}"
+    end
+  end
 
-    lhs = "(#{quoted_columns})"
-    rhs = "(#{Enum.map_join(1..Enum.count(columns), ", ", fn _ -> "?" end)})"
-    "#{lhs} #{operator} #{rhs}"
+  # The cursor columns up to the first unbounded (nil) value
+  defp bounded_columns(%Table{} = table, nil), do: cursor_columns(table)
+
+  defp bounded_columns(%Table{} = table, cursor) do
+    table |> cursor_columns() |> Enum.take_while(&(not is_nil(Map.get(cursor, &1.attnum))))
   end
 
   @spec order_by_sql(Table.t(), String.t()) :: String.t()
@@ -114,7 +117,7 @@ defmodule Sequin.Runtime.KeysetCursor do
 
   @spec casted_cursor_values(Table.t(), map()) :: [any()]
   def casted_cursor_values(%Table{} = table, cursor) do
-    columns = cursor_columns(table)
+    columns = bounded_columns(table, cursor)
 
     Enum.map(columns, fn %Table.Column{} = column ->
       val = Map.fetch!(cursor, column.attnum)
