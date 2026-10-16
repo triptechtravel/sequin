@@ -748,6 +748,29 @@ defmodule Sequin.Postgres do
     end
   end
 
+  @record_pks_column "__sequin_record_pks"
+  def record_pks_column, do: @record_pks_column
+
+  @doc """
+  A select expression for a row's key: each primary key column's Postgres text, as
+  `record_pks_column/0`.
+
+  Replication identifies a row by exactly this text (see Processor.data_tuple_to_ids/2).
+  Selecting it, rather than formatting decoded values, keeps rows read by query in the same
+  group as the replicated messages for them, so they're ordered and deduplicated against each
+  other. E.g. Elixir renders a timestamp of 13:45:30.5 as "13:45:30.500000" and a boolean as
+  "true", where Postgres says "13:45:30.5" and "t".
+  """
+  def record_pks_sql(%PostgresDatabaseTable{} = table) do
+    pks =
+      table.columns
+      |> Enum.filter(& &1.is_pk?)
+      |> Enum.sort_by(& &1.attnum)
+      |> Enum.map_join(", ", &"format('%s', #{quote_name(&1.name)})")
+
+    "array[#{pks}]::text[] as #{quote_name(@record_pks_column)}"
+  end
+
   def sequence_nextval(sequence_name) do
     # Reason for casting explicitly: https://github.com/elixir-ecto/postgrex#oid-type-encoding
     with %{rows: [[val]]} <- Repo.query!("SELECT nextval($1::text::regclass)", [sequence_name]) do

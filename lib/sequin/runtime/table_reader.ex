@@ -16,8 +16,6 @@ defmodule Sequin.Runtime.TableReader do
 
   require Logger
 
-  @record_pks_column "__sequin_record_pks"
-
   @type batch_id :: String.t()
 
   @type primary_key_list :: [[String.t()]]
@@ -185,7 +183,7 @@ defmodule Sequin.Runtime.TableReader do
         %Postgrex.Result{} = result ->
           raw_rows = Postgres.result_to_maps(result)
           rows = Postgres.load_rows(table, raw_rows)
-          primary_key_rows = Enum.map(raw_rows, &Map.fetch!(&1, @record_pks_column))
+          primary_key_rows = Enum.map(raw_rows, &Map.fetch!(&1, Postgres.record_pks_column()))
 
           last_row = List.last(rows)
 
@@ -247,7 +245,7 @@ defmodule Sequin.Runtime.TableReader do
           table
           |> records_by_column_attnum(rows)
           |> Enum.zip_with(raw_rows, fn record, raw_row ->
-            message_from_row(consumer, backfill, table, record, Map.fetch!(raw_row, @record_pks_column))
+            message_from_row(consumer, backfill, table, record, Map.fetch!(raw_row, Postgres.record_pks_column()))
           end)
 
         {:ok, %{messages: messages, next_cursor: next_cursor}}
@@ -284,7 +282,7 @@ defmodule Sequin.Runtime.TableReader do
       end
 
     sql = """
-    select #{select_columns}, #{record_pks_sql(table)}
+    select #{select_columns}, #{Postgres.record_pks_sql(table)}
     from #{Postgres.quote_name(table.schema, table.name)}
     where #{min_where_clause}
     order by #{order_by}
@@ -411,22 +409,6 @@ defmodule Sequin.Runtime.TableReader do
       }
 
     Consumers.consumer_message(consumer, db, message)
-  end
-
-  # Replication identifies a row by its key columns' Postgres text (see
-  # Processor.data_tuple_to_ids/2). Selecting the same text, rather than formatting decoded
-  # values, keeps backfilled and replicated messages for a row in the same group, so they're
-  # ordered and deduplicated against each other. E.g. Elixir renders a timestamp of
-  # 13:45:30.5 as "13:45:30.500000" and a boolean as "true", where Postgres says
-  # "13:45:30.5" and "t".
-  defp record_pks_sql(%PostgresDatabaseTable{} = table) do
-    pks =
-      table.columns
-      |> Enum.filter(& &1.is_pk?)
-      |> Enum.sort_by(& &1.attnum)
-      |> Enum.map_join(", ", &"format('%s', #{Postgres.quote_name(&1.name)})")
-
-    "array[#{pks}]::text[] as #{Postgres.quote_name(@record_pks_column)}"
   end
 
   defp records_by_column_attnum(%PostgresDatabaseTable{} = table, records) do

@@ -1340,39 +1340,14 @@ defmodule Sequin.Consumers do
 
   defp coerce_field_value(value, _filter), do: value
 
-  defp apply_filter(operator, %Date{} = field_value, %DateTimeValue{} = filter_value) do
-    field_value_as_datetime = DateTime.new!(field_value, ~T[00:00:00])
-    apply_filter(operator, field_value_as_datetime, filter_value)
-  end
-
-  defp apply_filter(operator, %NaiveDateTime{} = field_value, %DateTimeValue{} = filter_value) do
-    field_value_as_datetime = DateTime.from_naive!(field_value, "Etc/UTC")
-    apply_filter(operator, field_value_as_datetime, filter_value)
-  end
-
-  defp apply_filter(:==, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.compare(field_value, filter_value) == :eq
-  end
-
-  defp apply_filter(:!=, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.compare(field_value, filter_value) != :eq
-  end
-
-  defp apply_filter(:>, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.after?(field_value, filter_value)
-  end
-
-  defp apply_filter(:<, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.before?(field_value, filter_value)
-  end
-
-  defp apply_filter(:>=, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.compare(field_value, filter_value) in [:gt, :eq]
-  end
-
-  defp apply_filter(:<=, field_value, %DateTimeValue{value: filter_value}) do
-    DateTime.compare(field_value, filter_value) in [:lt, :eq]
-  end
+  @matching_orders %{
+    :== => [:eq],
+    :!= => [:lt, :gt],
+    :> => [:gt],
+    :< => [:lt],
+    :>= => [:gt, :eq],
+    :<= => [:lt, :eq]
+  }
 
   defp apply_filter(:is_null, field_value, %NullValue{}) do
     is_nil(field_value)
@@ -1382,8 +1357,13 @@ defmodule Sequin.Consumers do
     not is_nil(field_value)
   end
 
-  defp apply_filter(op, field_value, %{value: filter_value}) when op in [:==, :!=, :>, :<, :>=, :<=],
-    do: apply(Kernel, op, [field_value, filter_value])
+  defp apply_filter(op, field_value, filter_value) when is_map_key(@matching_orders, op) do
+    case compare_filter_value(field_value, filter_value) do
+      # A null (or otherwise incomparable) value satisfies no ordering, though it's "not equal"
+      nil -> op == :!=
+      order -> order in @matching_orders[op]
+    end
+  end
 
   defp apply_filter(:is_null, field_value, _), do: is_nil(field_value)
   defp apply_filter(:not_null, field_value, _), do: not is_nil(field_value)
@@ -1396,6 +1376,36 @@ defmodule Sequin.Consumers do
     field_value not in filter_value and
       to_string(field_value) not in Enum.map(filter_value, &to_string/1)
   end
+
+  # :lt, :eq or :gt, or nil when the values can't be ordered (e.g. a null field)
+  defp compare_filter_value(nil, _filter_value), do: nil
+
+  defp compare_filter_value(field_value, %DateTimeValue{value: filter_value}) do
+    case field_value do
+      %DateTime{} -> DateTime.compare(field_value, filter_value)
+      %NaiveDateTime{} -> field_value |> DateTime.from_naive!("Etc/UTC") |> DateTime.compare(filter_value)
+      %Date{} -> field_value |> DateTime.new!(~T[00:00:00]) |> DateTime.compare(filter_value)
+      # Infinite timestamps and dates come through replication as Postgres's text for them
+      "infinity" -> :gt
+      "-infinity" -> :lt
+      _ -> nil
+    end
+  end
+
+  defp compare_filter_value(%Decimal{} = field_value, %{value: filter_value}) when is_number(filter_value) do
+    if Decimal.nan?(field_value), do: nil, else: Decimal.compare(field_value, to_decimal(filter_value))
+  end
+
+  defp compare_filter_value(field_value, %{value: filter_value}) do
+    cond do
+      field_value == filter_value -> :eq
+      field_value > filter_value -> :gt
+      true -> :lt
+    end
+  end
+
+  defp to_decimal(value) when is_integer(value), do: Decimal.new(value)
+  defp to_decimal(value) when is_float(value), do: Decimal.from_float(value)
 
   def enrich_source_tables(source_tables, %PostgresDatabase{} = postgres_database) do
     Enum.map(source_tables, fn
