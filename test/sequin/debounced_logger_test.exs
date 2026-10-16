@@ -12,8 +12,9 @@ defmodule Sequin.DebouncedLoggerTest do
   @fast_debounce_ms 5
   @test_table :debounced_logger_test_buckets
 
-  setup do
-    # Use a separate table for tests to ensure async safety
+  setup_all do
+    # A separate table for tests, for async safety. Created once, so it's owned by a process that
+    # outlives each test: a test's pending flush timers would otherwise hit a deleted table.
     DebouncedLogger.setup_ets(@test_table)
     :ok
   end
