@@ -12,7 +12,7 @@ defmodule Sequin.Consumers.ColumnFilterMatchingTest do
     ReplicationFactory.insert_wal_pipeline!(source_tables: [source_table])
   end
 
-  defp message(value, action \\ :insert) do
+  defp message(value, action) do
     message = ReplicationFactory.postgres_message(action: action, table_oid: @table_oid)
     field = ReplicationFactory.field(column_attnum: 1, value: value)
 

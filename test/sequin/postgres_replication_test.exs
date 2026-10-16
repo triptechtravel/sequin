@@ -632,7 +632,8 @@ defmodule Sequin.PostgresReplicationTest do
       [consumer_event] = receive_messages(consumer, 1)
       commit_lsn = consumer_event.commit_lsn
 
-      assert {:ok, ^commit_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot())
+      # The slot may first advance past other WAL (e.g. other tests' cleanup), so wait for the ack
+      assert_eventually Postgres.confirmed_flush_lsn(db, replication_slot()) == {:ok, commit_lsn}, 1000
     end
 
     @tag :jepsen
