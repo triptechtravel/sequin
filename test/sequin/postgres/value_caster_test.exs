@@ -138,10 +138,9 @@ defmodule Sequin.Postgres.ValueCasterTest do
       assert {:ok, ~T[13:45:30.000000]} = ValueCaster.cast("time", "13:45:30")
     end
 
-    test "timetz is normalized to UTC" do
-      assert {:ok, ~T[08:15:30.000000]} = ValueCaster.cast("timetz", "13:45:30+05:30")
-      assert {:ok, ~T[16:45:30.500000]} = ValueCaster.cast("timetz", "13:45:30.5-03")
-      assert {:ok, ~T[23:30:00.000000]} = ValueCaster.cast("timetz", "00:30:00+01")
+    test "timetz keeps its offset, as Postgres's text" do
+      assert {:ok, "13:45:30+05:30"} = ValueCaster.cast("timetz", "13:45:30+05:30")
+      assert {:ok, ["13:45:30.5-03", "00:30:00+01"]} = ValueCaster.cast("_timetz", ~s({13:45:30.5-03,00:30:00+01}))
     end
   end
 

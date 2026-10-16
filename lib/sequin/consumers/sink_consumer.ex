@@ -20,6 +20,7 @@ defmodule Sequin.Consumers.SinkConsumer do
   alias Sequin.Consumers.KinesisSink
   alias Sequin.Consumers.MeilisearchSink
   alias Sequin.Consumers.NatsSink
+  alias Sequin.Consumers.PostgresSink
   alias Sequin.Consumers.RabbitMqSink
   alias Sequin.Consumers.RedisStreamSink
   alias Sequin.Consumers.RedisStringSink
@@ -53,6 +54,7 @@ defmodule Sequin.Consumers.SinkConsumer do
     :meilisearch,
     :sns,
     :elasticsearch,
+    :postgres,
     :benchmark
   ]
 
@@ -137,6 +139,7 @@ defmodule Sequin.Consumers.SinkConsumer do
         typesense: TypesenseSink,
         meilisearch: MeilisearchSink,
         elasticsearch: ElasticsearchSink,
+        postgres: PostgresSink,
         benchmark: BenchmarkSink
       ],
       on_replace: :update,

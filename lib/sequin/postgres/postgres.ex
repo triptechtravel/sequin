@@ -738,6 +738,8 @@ defmodule Sequin.Postgres do
   defp select_as_text?(%{pg_typtype: "c"}), do: true
   # Postgrex raises on -infinity dates, failing the whole batch
   defp select_as_text?(%{type: type}) when type in ["date", "date[]"], do: true
+  # Postgrex decodes timetz to a Time in UTC, losing its offset
+  defp select_as_text?(%{type: type}) when type in ["time with time zone", "time with time zone[]"], do: true
   defp select_as_text?(column), do: not has_encoder?(column)
 
   # The type name logical replication reports for the column, which ValueCaster dispatches on

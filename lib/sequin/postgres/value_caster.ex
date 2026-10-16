@@ -57,18 +57,9 @@ defmodule Sequin.Postgres.ValueCaster do
     {:ok, list}
   end
 
-  # Normalized to UTC (as Postgrex does) so the offset isn't silently dropped
-  def cast("timetz", value_str) when is_binary(value_str) do
-    with [_, time, sign, hours | minutes] <- Regex.run(~r/^([\d:.]+)([+-])(\d{2}):?(\d{2})?/, value_str),
-         {:ok, time} <- Time.from_iso8601(time) do
-      offset_secs = String.to_integer(hours) * 3600 + String.to_integer(List.first(minutes, "0")) * 60
-      offset_secs = if sign == "+", do: -offset_secs, else: offset_secs
-
-      {:ok, time |> Time.add(offset_secs) |> to_usec()}
-    else
-      _ -> {:ok, value_str}
-    end
-  end
+  # Kept as Postgres's text: an Elixir Time has no offset, and dropping or normalizing it away
+  # loses the value's offset
+  def cast("timetz", value_str) when is_binary(value_str), do: {:ok, value_str}
 
   def cast(type, value) when is_list(value) do
     res =
@@ -157,8 +148,6 @@ defmodule Sequin.Postgres.ValueCaster do
     # Pseudotypes
     "any" => :any
   }
-
-  defp to_usec(%Time{microsecond: {us, _}} = time), do: %{time | microsecond: {us, 6}}
 
   defp string_to_ecto_type(type) do
     Map.get(@postgres_to_ecto_type_mapping, type, :string)

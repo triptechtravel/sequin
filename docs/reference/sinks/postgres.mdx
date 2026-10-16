@@ -1,0 +1,86 @@
+---
+title: "Postgres sink"
+sidebarTitle: "Postgres sink"
+description: "Mirror rows from your Postgres database into tables in another Postgres database with Sequin's Postgres sink."
+---
+
+The Postgres sink keeps tables in another Postgres database in sync with your source tables. Inserts and updates are upserted by the destination table's primary key, and deletes delete. Use it to maintain a replica of selected tables, for example in an analytics or reporting database.
+
+## Configuration
+
+- **Host**, **Port**, **Database**
+
+    Where the destination database is. The port defaults to `5432`.
+
+- **Username**, **Password**
+
+    The credentials Sequin connects with. The user needs `INSERT`, `UPDATE`, and `DELETE` on the destination tables, and `SELECT` on them to resolve upserts.
+
+- **SSL**
+
+    Whether to connect over SSL.
+
+- **Table**
+
+    For static routing, the destination table, optionally schema-qualified, like `public.users` (the schema defaults to `public`). Names are case-sensitive and taken literally, so `public.Users` is the table created with `create table "Users"`.
+
+- **Batch size**
+
+    The most rows Sequin writes to a table in one statement. Defaults to `100`.
+
+## Destination tables
+
+Sequin writes to existing tables; it doesn't create or alter them. Each destination table needs a primary key, which Sequin upserts and deletes by.
+
+- **Columns.** Sequin writes the columns present in both the row and the destination table. Columns only in the destination are left as they are, and columns only in the source are ignored. Generated columns are never written. Identity columns (including `GENERATED ALWAYS`) take the source's values.
+- **Types.** Postgres converts each value into its destination column's type, the way it would parse the value's text or JSON form. A destination column of the same type as its source column receives the same value, including for composite types, arrays, ranges, `jsonb`, `numeric` `NaN`, and `±infinity` dates and timestamps.
+- **Order.** Sequin writes a row's changes in the order they were committed. When a batch holds several changes to a row, the last one wins.
+
+The simplest destination table is a copy of the source table's definition:
+
+```sql
+create table mirror.users (like public.users including all);
+```
+
+Sequin rereads a destination table's columns and primary key at least once a minute, so it picks up changes to the table's definition without a restart.
+
+## Transforms
+
+Without a [transform](/reference/transforms), Sequin writes each row's `record`. With one, Sequin writes the transform's output, which must be a map of column name to value:
+
+```elixir
+def transform(action, record, changes, metadata) do
+  %{
+    "id" => record["id"],
+    "email" => String.downcase(record["email"]),
+    "updated_at" => record["updated_at"]
+  }
+end
+```
+
+Deletes always use the row's `record`, which carries its primary key.
+
+## Routing
+
+The Postgres sink supports dynamic routing of `action` and `table_name` with [routing functions](/reference/routing). By default, inserts, updates, and backfilled reads are upserted and deletes are deleted, into a table with the same schema and name as the source table.
+
+For example, to mirror every table into a `mirror` schema:
+
+```elixir
+def route(action, record, changes, metadata) do
+  %{table_name: "mirror.#{metadata.table_name}"}
+end
+```
+
+| Key | Description |
+| --- | --- |
+| `action` | `"upsert"` to insert or update the row by its primary key, or `"delete"` to delete it. |
+| `table_name` | The destination table, optionally schema-qualified. |
+
+## Large values
+
+Under the default [replica identity](https://www.postgresql.org/docs/current/sql-altertable.html#SQL-ALTERTABLE-REPLICA-IDENTITY), Postgres doesn't replicate the values of large (TOASTed) columns that an update leaves unchanged. Sequin reads those values from the source row instead. If it can't (for example, the row has since been deleted), it leaves the destination column as it is rather than overwriting it.
+
+## Test connection
+
+"Test connection" in the Sequin console connects with the sink's settings and, for static routing, checks that the table exists and has a primary key.

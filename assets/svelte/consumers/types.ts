@@ -249,6 +249,21 @@ export type ElasticsearchConsumer = BaseConsumer & {
   };
 };
 
+// Postgres specific sink
+export type PostgresSinkConsumer = BaseConsumer & {
+  sink: {
+    type: "postgres";
+    host: string;
+    port: number;
+    database: string;
+    username: string;
+    ssl: boolean;
+    table_name: string | null;
+    batch_size: number;
+    routing_mode: "dynamic" | "static";
+  };
+};
+
 // Union type for all consumer types
 export type Consumer =
   | HttpPushConsumer
@@ -265,7 +280,8 @@ export type Consumer =
   | TypesenseConsumer
   | SnsConsumer
   | ElasticsearchConsumer
-  | RedisStringConsumer;
+  | RedisStringConsumer
+  | PostgresSinkConsumer;
 
 export const SinkTypeValues = [
   "http_push",
@@ -283,6 +299,7 @@ export const SinkTypeValues = [
   "meilisearch",
   "elasticsearch",
   "redis_string",
+  "postgres",
 ] as const;
 
 export type SinkType = (typeof SinkTypeValues)[number];
@@ -303,6 +320,7 @@ export const RoutedSinkTypeValues = [
   "sqs",
   "sns",
   "kinesis",
+  "postgres",
 ] as const;
 
 export type RoutedSinkType = (typeof RoutedSinkTypeValues)[number];

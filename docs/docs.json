@@ -106,6 +106,7 @@
                   "reference/sinks/kafka",
                   "reference/sinks/meilisearch",
                   "reference/sinks/nats",
+                  "reference/sinks/postgres",
                   "reference/sinks/rabbitmq",
                   "reference/sinks/redis-string",
                   "reference/sinks/redis-stream",

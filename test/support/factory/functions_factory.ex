@@ -161,6 +161,7 @@ defmodule Sequin.Factory.FunctionsFactory do
           :typesense,
           :meilisearch,
           :elasticsearch,
+          :postgres,
           :sqs,
           :sns,
           :s2,
@@ -241,6 +242,13 @@ defmodule Sequin.Factory.FunctionsFactory do
             """
             %{
               index_name: metadata.table_name
+            }
+            """
+
+          :postgres ->
+            """
+            %{
+              table_name: metadata.table_name
             }
             """
 

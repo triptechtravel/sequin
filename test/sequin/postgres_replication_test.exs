@@ -51,6 +51,48 @@ defmodule Sequin.PostgresReplicationTest do
 
   @publication "characters_publication"
 
+  # A row with a value of every type in all_column_types, including awkward ones
+  @populated_all_column_types_sql ~S"""
+  insert into all_column_types (
+    c_bool, c_int2, c_int4, c_int8, c_numeric, c_numeric_scaled, c_numeric_nan,
+    c_float4, c_float8, c_float8_special, c_money, c_char, c_varchar, c_text, c_name, c_qchar,
+    c_citext, c_bytea, c_date, c_date_infinity, c_time, c_timetz, c_timestamp,
+    c_timestamp_infinity, c_timestamptz, c_interval, c_uuid, c_json, c_jsonb, c_inet, c_cidr,
+    c_macaddr, c_macaddr8, c_bit, c_varbit, c_point, c_line, c_lseg, c_box, c_path, c_polygon,
+    c_circle, c_tsvector, c_tsquery, c_xml, c_pg_lsn, c_oid, c_regclass, c_int4range,
+    c_int8range, c_numrange, c_tsrange, c_tstzrange, c_daterange, c_empty_range,
+    c_unbounded_range, c_int4multirange, c_hstore, c_vector, c_halfvec, c_sparsevec, c_enum,
+    c_domain, c_composite, c_composite_tricky, c_bool_arr, c_int4_arr, c_int4_2d_arr,
+    c_int8_arr, c_numeric_arr, c_float8_arr, c_text_arr, c_varchar_arr, c_bytea_arr,
+    c_date_arr, c_time_arr, c_timetz_arr, c_timestamp_arr, c_timestamptz_arr, c_interval_arr, c_uuid_arr,
+    c_json_arr, c_jsonb_arr, c_inet_arr, c_money_arr, c_xml_arr, c_int4range_arr, c_enum_arr,
+    c_domain_arr, c_composite_arr
+  ) values (
+    true, -32768, 2147483647, 9223372036854775807, 12345678901234567890.123456789, 3.14159, 'NaN',
+    1.5, -2.25e-10, 'Infinity', 1234.56, 'ab', 'hello, world', E'line\nbreak "quoted" \\ back',
+    'a_name', 'q', 'MiXeD', '\xdeadbeef', '2024-02-29', 'infinity', '13:45:30.123456',
+    '13:45:30+05:30', '2024-02-29 13:45:30.123456', '-infinity', '2024-02-29 13:45:30.123456+00',
+    '1 year 2 mons 3 days 04:05:06.789', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+    '{"b": 1, "a": [1, 2.5, null]}', '{"b": 1, "a": [1, 2.5, null]}', '192.168.0.1/24',
+    '10.0.0.0/8', '08:00:2b:01:02:03', '08:00:2b:01:02:03:04:05', B'1010', B'101',
+    '(1.5,2)', '{1,-1,0}', '[(0,0),(1,1)]', '((0,0),(1,1))', '[(0,0),(1,1),(2,0)]',
+    '((0,0),(1,1),(2,0))', '<(1,1),5>', 'the quick brown fox', 'quick & fox',
+    '<hobbit name="Frodo"/>', '16/B374D848', 12345, 'all_column_types', '[1,10)',
+    '[1,9223372036854775807)', '(1.5,2.5]', '[2024-01-01 00:00,2024-12-31 23:59)',
+    '[2024-01-01 00:00+00,2024-12-31 23:59+00)', '[2024-01-01,2024-12-31)', 'empty', '[5,)',
+    '{[1,3), [5,8)}', 'a=>1, "b c"=>NULL', '[1,2,3]', '[1.5,2.5,3.5]', '{1:1.5,3:2}/5',
+    'retired', 9001, row('EUR', 42.00), row('1 Bag End, "Hobbiton"', null, 3),
+    '{t,f,NULL}', '{1,NULL,3}', '{{1,2},{3,4}}', '{9223372036854775807}', '{1.5,NaN,Infinity,-Infinity}',
+    '{1.5,-Infinity,NaN}', '{"a,b","c\"d",NULL,"NULL",""}', '{x,y}', '{"\\xdead","\\xbeef"}',
+    '{2024-02-29,infinity,-infinity}', '{13:45:30,23:59:59.999999}', '{13:45:30.5-03,00:30:00+01}', '{"2024-02-29 13:45:30.5",infinity}',
+    '{"2024-02-29 13:45:30.5+00"}', '{"1 day","-04:05:06"}',
+    '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', E'{"{\\"a\\": 1}"}', E'{"{\\"a\\": [1, 2]}"}',
+    '{10.0.0.1,::1}', '{1.50,2}', '{"<a/>"}', '{"[1,2)","empty"}', '{active,retired}',
+    '{1,9001}', array[row('EUR', 1.50), row('U,S"D', 2)]::money_with_currency[]
+  )
+  returning id
+  """
+
   def replication_slot, do: ReplicationSlots.slot_name(__MODULE__)
 
   setup do
@@ -1489,46 +1531,7 @@ defmodule Sequin.PostgresReplicationTest do
 
     test "a backfilled row is identical to the same row streamed from the WAL", ctx do
       %{rows: [[populated_id]]} =
-        UnboxedRepo.query!(~S"""
-        insert into all_column_types (
-          c_bool, c_int2, c_int4, c_int8, c_numeric, c_numeric_scaled, c_numeric_nan,
-          c_float4, c_float8, c_float8_special, c_money, c_char, c_varchar, c_text, c_name, c_qchar,
-          c_citext, c_bytea, c_date, c_date_infinity, c_time, c_timetz, c_timestamp,
-          c_timestamp_infinity, c_timestamptz, c_interval, c_uuid, c_json, c_jsonb, c_inet, c_cidr,
-          c_macaddr, c_macaddr8, c_bit, c_varbit, c_point, c_line, c_lseg, c_box, c_path, c_polygon,
-          c_circle, c_tsvector, c_tsquery, c_xml, c_pg_lsn, c_oid, c_regclass, c_int4range,
-          c_int8range, c_numrange, c_tsrange, c_tstzrange, c_daterange, c_empty_range,
-          c_unbounded_range, c_int4multirange, c_hstore, c_vector, c_halfvec, c_sparsevec, c_enum,
-          c_domain, c_composite, c_composite_tricky, c_bool_arr, c_int4_arr, c_int4_2d_arr,
-          c_int8_arr, c_numeric_arr, c_float8_arr, c_text_arr, c_varchar_arr, c_bytea_arr,
-          c_date_arr, c_time_arr, c_timetz_arr, c_timestamp_arr, c_timestamptz_arr, c_interval_arr, c_uuid_arr,
-          c_json_arr, c_jsonb_arr, c_inet_arr, c_money_arr, c_xml_arr, c_int4range_arr, c_enum_arr,
-          c_domain_arr, c_composite_arr
-        ) values (
-          true, -32768, 2147483647, 9223372036854775807, 12345678901234567890.123456789, 3.14159, 'NaN',
-          1.5, -2.25e-10, 'Infinity', 1234.56, 'ab', 'hello, world', E'line\nbreak "quoted" \\ back',
-          'a_name', 'q', 'MiXeD', '\xdeadbeef', '2024-02-29', 'infinity', '13:45:30.123456',
-          '13:45:30+05:30', '2024-02-29 13:45:30.123456', '-infinity', '2024-02-29 13:45:30.123456+00',
-          '1 year 2 mons 3 days 04:05:06.789', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          '{"b": 1, "a": [1, 2.5, null]}', '{"b": 1, "a": [1, 2.5, null]}', '192.168.0.1/24',
-          '10.0.0.0/8', '08:00:2b:01:02:03', '08:00:2b:01:02:03:04:05', B'1010', B'101',
-          '(1.5,2)', '{1,-1,0}', '[(0,0),(1,1)]', '((0,0),(1,1))', '[(0,0),(1,1),(2,0)]',
-          '((0,0),(1,1),(2,0))', '<(1,1),5>', 'the quick brown fox', 'quick & fox',
-          '<hobbit name="Frodo"/>', '16/B374D848', 12345, 'all_column_types', '[1,10)',
-          '[1,9223372036854775807)', '(1.5,2.5]', '[2024-01-01 00:00,2024-12-31 23:59)',
-          '[2024-01-01 00:00+00,2024-12-31 23:59+00)', '[2024-01-01,2024-12-31)', 'empty', '[5,)',
-          '{[1,3), [5,8)}', 'a=>1, "b c"=>NULL', '[1,2,3]', '[1.5,2.5,3.5]', '{1:1.5,3:2}/5',
-          'retired', 9001, row('EUR', 42.00), row('1 Bag End, "Hobbiton"', null, 3),
-          '{t,f,NULL}', '{1,NULL,3}', '{{1,2},{3,4}}', '{9223372036854775807}', '{1.5,NaN,Infinity,-Infinity}',
-          '{1.5,-Infinity,NaN}', '{"a,b","c\"d",NULL,"NULL",""}', '{x,y}', '{"\\xdead","\\xbeef"}',
-          '{2024-02-29,infinity,-infinity}', '{13:45:30,23:59:59.999999}', '{13:45:30.5-03,00:30:00+01}', '{"2024-02-29 13:45:30.5",infinity}',
-          '{"2024-02-29 13:45:30.5+00"}', '{"1 day","-04:05:06"}',
-          '{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}', E'{"{\\"a\\": 1}"}', E'{"{\\"a\\": [1, 2]}"}',
-          '{10.0.0.1,::1}', '{1.50,2}', '{"<a/>"}', '{"[1,2)","empty"}', '{active,retired}',
-          '{1,9001}', array[row('EUR', 1.50), row('U,S"D', 2)]::money_with_currency[]
-        )
-        returning id
-        """)
+        UnboxedRepo.query!(@populated_all_column_types_sql)
 
       %{rows: [[null_id]]} = UnboxedRepo.query!("insert into all_column_types default values returning id")
 
@@ -1692,6 +1695,68 @@ defmodule Sequin.PostgresReplicationTest do
       # Conflict detection and ordering between backfill and CDC key off the group
       assert backfilled.group_id == streamed.group_id
       assert backfilled.data.record == streamed.data.record
+    end
+  end
+
+  describe "Postgres sink" do
+    setup do
+      # Created outside the sandbox, as the sink writes through its own connection
+      UnboxedRepo.query!("create schema if not exists sink_dest")
+      UnboxedRepo.query!("drop table if exists sink_dest.all_column_types")
+      UnboxedRepo.query!("create table sink_dest.all_column_types (like public.all_column_types including all)")
+      on_exit(fn -> UnboxedRepo.query!("drop table if exists sink_dest.all_column_types") end)
+
+      account_id = AccountsFactory.insert_account!().id
+      source_db = DatabasesFactory.insert_configured_postgres_database!(account_id: account_id, pg_major_version: 17)
+      ConnectionCache.cache_connection(source_db, UnboxedRepo)
+      {:ok, tables} = Databases.tables(source_db)
+      table = Sequin.Enum.find!(tables, &(&1.name == "all_column_types"))
+
+      pg_replication =
+        ReplicationFactory.insert_postgres_replication!(
+          account_id: account_id,
+          postgres_database_id: source_db.id,
+          slot_name: replication_slot(),
+          publication_name: @publication,
+          status: :active
+        )
+
+      ConsumersFactory.insert_sink_consumer!(
+        account_id: account_id,
+        replication_slot_id: pg_replication.id,
+        type: :postgres,
+        sink: %{table_name: "sink_dest.all_column_types"},
+        source_tables: [
+          ConsumersFactory.source_table_attrs(
+            table_oid: table.oid,
+            group_column_attnums: table.columns |> Enum.filter(& &1.is_pk?) |> Enum.map(& &1.attnum)
+          )
+        ]
+      )
+
+      sup = Module.concat(__MODULE__, Runtime.Supervisor)
+      start_supervised!(Sequin.DynamicSupervisor.child_spec(name: sup))
+      {:ok, _} = Runtime.Supervisor.start_replication(sup, pg_replication, test_pid: self())
+
+      :ok
+    end
+
+    test "mirrors inserts, updates and deletes of every column type" do
+      %{rows: [[populated_id]]} = UnboxedRepo.query!(@populated_all_column_types_sql)
+      %{rows: [[null_id]]} = UnboxedRepo.query!("insert into all_column_types default values returning id")
+      assert_mirrored()
+
+      UnboxedRepo.query!(
+        "update all_column_types set c_text = 'changed', c_int4_arr = '{9}', c_composite = row('USD', 1) where id = $1",
+        [populated_id]
+      )
+
+      UnboxedRepo.query!(~s(update all_column_types set c_jsonb = '{"now": "set"}' where id = $1), [null_id])
+      assert_mirrored()
+
+      UnboxedRepo.query!("delete from all_column_types where id = $1", [null_id])
+      assert_mirrored()
+      assert %{num_rows: 1} = UnboxedRepo.query!("select 1 from sink_dest.all_column_types")
     end
   end
 
@@ -1881,6 +1946,31 @@ defmodule Sequin.PostgresReplicationTest do
         flunk("Did not receive :simple_http_server_loaded within 5 seconds")
     end
   end
+
+  # The destination table holds exactly the source table's rows. Compared as jsonb, as some
+  # types (json, point, xml, ...) have no equality operator.
+  defp assert_mirrored do
+    rows = fn table ->
+      %{rows: rows} = UnboxedRepo.query!("select to_jsonb(t) from #{table} t order by id")
+      List.flatten(rows)
+    end
+
+    assert_eventually rows.("sink_dest.all_column_types") == rows.("public.all_column_types"), 5_000
+  rescue
+    error in ExUnit.AssertionError ->
+      source = rows_by_id(UnboxedRepo.query!("select to_jsonb(t) from public.all_column_types t").rows)
+      dest = rows_by_id(UnboxedRepo.query!("select to_jsonb(t) from sink_dest.all_column_types t").rows)
+
+      differences =
+        for id <- Enum.uniq(Map.keys(source) ++ Map.keys(dest)),
+            column <- Enum.uniq(Map.keys(source[id] || %{}) ++ Map.keys(dest[id] || %{})),
+            (source[id] || %{})[column] != (dest[id] || %{})[column],
+            do: {id, column, source: (source[id] || %{})[column], destination: (dest[id] || %{})[column]}
+
+      reraise %{error | message: "Destination differs from source: #{inspect(differences, pretty: true)}"}, __STACKTRACE__
+  end
+
+  defp rows_by_id(rows), do: Map.new(rows, fn [row] -> {row["id"], row} end)
 
   defp assert_lsn_progress(init_lsn, db) do
     # Verify LSN progressed after heartbeats

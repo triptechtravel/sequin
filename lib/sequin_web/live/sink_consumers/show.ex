@@ -23,6 +23,7 @@ defmodule SequinWeb.SinkConsumersLive.Show do
   alias Sequin.Consumers.MeilisearchSink
   alias Sequin.Consumers.NatsSink
   alias Sequin.Consumers.PathFunction
+  alias Sequin.Consumers.PostgresSink
   alias Sequin.Consumers.RabbitMqSink
   alias Sequin.Consumers.RedisStreamSink
   alias Sequin.Consumers.RedisStringSink
@@ -1024,6 +1025,19 @@ defmodule SequinWeb.SinkConsumersLive.Show do
     }
   end
 
+  defp encode_sink(%SinkConsumer{sink: %PostgresSink{} = sink}) do
+    %{
+      type: :postgres,
+      host: sink.host,
+      port: sink.port,
+      database: sink.database,
+      username: sink.username,
+      ssl: sink.ssl,
+      table_name: sink.table_name,
+      batch_size: sink.batch_size
+    }
+  end
+
   defp encode_sink(%SinkConsumer{sink: %MeilisearchSink{} = sink}) do
     %{
       type: :meilisearch,
@@ -1426,6 +1440,7 @@ defmodule SequinWeb.SinkConsumersLive.Show do
   defp consumer_title(%{sink: %{type: :sqs}}), do: "SQS Sink"
   defp consumer_title(%{sink: %{type: :typesense}}), do: "Typesense Sink"
   defp consumer_title(%{sink: %{type: :meilisearch}}), do: "Meilisearch Sink"
+  defp consumer_title(%{sink: %{type: :postgres}}), do: "Postgres Sink"
   defp consumer_title(%{sink: %{type: :benchmark}}), do: "Benchmark Sink"
 
   defp put_health(%SinkConsumer{} = consumer) do

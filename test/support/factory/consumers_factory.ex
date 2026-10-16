@@ -17,6 +17,7 @@ defmodule Sequin.Factory.ConsumersFactory do
   alias Sequin.Consumers.KinesisSink
   alias Sequin.Consumers.MeilisearchSink
   alias Sequin.Consumers.NatsSink
+  alias Sequin.Consumers.PostgresSink
   alias Sequin.Consumers.RabbitMqSink
   alias Sequin.Consumers.RedisStreamSink
   alias Sequin.Consumers.RedisStringSink
@@ -176,6 +177,25 @@ defmodule Sequin.Factory.ConsumersFactory do
         secret_access_key: Factory.word(),
         is_fifo: Enum.random([true, false]),
         routing_mode: :static
+      },
+      attrs
+    )
+  end
+
+  defp sink(:postgres, _account_id, attrs) do
+    # The test database, so tests can write through the sink for real
+    merge_attributes(
+      %PostgresSink{
+        type: :postgres,
+        host: "localhost",
+        port: 5432,
+        database: "sequin_test",
+        username: "postgres",
+        password: "postgres",
+        table_name: "public.#{Factory.word()}",
+        batch_size: 100,
+        routing_mode: :static,
+        connection_id: Factory.uuid()
       },
       attrs
     )

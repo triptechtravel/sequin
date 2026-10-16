@@ -33,6 +33,7 @@
   import TypesenseIcon from "../sinks/typesense/TypesenseIcon.svelte";
   import MeilisearchIcon from "../sinks/meilisearch/MeilisearchIcon.svelte";
   import ElasticsearchIcon from "../sinks/elasticsearch/ElasticsearchIcon.svelte";
+  import PostgresIcon from "../sinks/postgres/PostgresIcon.svelte";
 
   import { Badge } from "$lib/components/ui/badge";
   import * as d3 from "d3";
@@ -56,7 +57,8 @@
       | "nats"
       | "rabbitmq"
       | "typesense"
-      | "elasticsearch";
+      | "elasticsearch"
+      | "postgres";
 
     status: "active" | "disabled" | "paused";
     database_name: string;
@@ -163,6 +165,11 @@
       id: "elasticsearch",
       name: "Elasticsearch",
       icon: ElasticsearchIcon,
+    },
+    {
+      id: "postgres",
+      name: "Postgres",
+      icon: PostgresIcon,
     },
   ];
 

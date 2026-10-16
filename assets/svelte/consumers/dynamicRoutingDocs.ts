@@ -250,4 +250,23 @@ export const routedSinkDocs: Record<RoutedSinkType, RoutedSinkDocs> = {
       },
     },
   },
+  postgres: {
+    fields: {
+      action: {
+        description:
+          "'upsert' to insert or update the row by its primary key, 'delete' to delete it",
+        staticValue:
+          "'upsert' for insert, update, and read, 'delete' for delete",
+        dynamicDefault:
+          "'upsert' for insert, update, and read, 'delete' for delete",
+      },
+      table_name: {
+        description:
+          "Destination table, optionally schema-qualified (e.g. public.users)",
+        staticValue: "<empty>",
+        staticFormField: "table_name",
+        dynamicDefault: "<table_schema>.<table_name>",
+      },
+    },
+  },
 };

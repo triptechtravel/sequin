@@ -17,7 +17,11 @@ For notes on Docker and CLI version releases, see the [GitHub Releases](https://
 Entries from v0.14.6 onward are for the [TripTech-maintained fork](https://github.com/triptechtravel/sequin), released as `v0.14.6-ttN` Docker images on `ghcr.io/triptechtravel/sequin`.
 
 ## October 17, 2026
-[v0.14.6-tt6...v0.14.6-tt10](https://github.com/triptechtravel/sequin/compare/v0.14.6-tt6...v0.14.6-tt10)
+[v0.14.6-tt6...v0.14.6-tt11](https://github.com/triptechtravel/sequin/compare/v0.14.6-tt6...v0.14.6-tt11)
+
+### Postgres sink
+
+A new [Postgres sink](https://github.com/triptechtravel/sequin/blob/main/docs/reference/sinks/postgres.mdx) mirrors rows into tables in another Postgres database. Inserts and updates are upserted by the destination table's primary key, and deletes delete. Values keep their exact types, including composite types, arrays, ranges, `jsonb` and infinite dates. Use a routing function to mirror many tables at once, for example into a `mirror` schema.
 
 ### Backfills match replication, for every column type
 
@@ -45,7 +49,7 @@ Under the default replica identity, Postgres replicates an update without the va
 * Messages keep their group after a restart or disk overflow. This preserves per-group ordering and backfill/replication conflict detection for custom group columns.
 * A `jsonb` group column no longer crashes replication. Array group columns no longer render as garbled text.
 * Replication no longer turns a `"NULL"` string inside an array into `null`.
-* `time` values keep their microseconds, and `timetz` values are normalized to UTC instead of dropping their offset. Whole-second `time` values now serialize with `.000000`, as timestamps already do.
+* `time` values keep their microseconds, and `timetz` values keep their offset (as Postgres's text, e.g. `"13:45:30+05:30"`) instead of dropping it. Whole-second `time` values now serialize with `.000000`, as timestamps already do.
 * `NaN` and `Infinity` values in `float` and `numeric` columns, and infinite timestamps, are sent as the same strings in backfills and replication.
 * WAL pipelines: a datetime column filter no longer crashes replication on a `null` value, or on any delete under the default replica identity.
 * WAL pipelines: number filters on `numeric` columns compare values correctly. Before, `> 100` always matched and `< 100` never did. `null` values no longer pass `>` filters.
