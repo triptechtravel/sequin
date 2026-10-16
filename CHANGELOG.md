@@ -16,6 +16,13 @@ For notes on Docker and CLI version releases, see the [GitHub Releases](https://
 > [!NOTE]
 Entries from v0.14.6 onward are for the [TripTech-maintained fork](https://github.com/triptechtravel/sequin), released as `v0.14.6-ttN` Docker images on `ghcr.io/triptechtravel/sequin`.
 
+## October 17, 2026 (tt12)
+[v0.14.6-tt11...v0.14.6-tt12](https://github.com/triptechtravel/sequin/compare/v0.14.6-tt11...v0.14.6-tt12)
+
+### Gzip for Typesense sinks
+
+A Typesense sink can now gzip its request bodies with the new `gzip` option, which is off by default. Typesense itself doesn't accept compressed requests, so the option is for a proxy in front of it that inflates them. That cuts outbound transfer when the host bills for it. Webhook sinks already compress when their HTTP endpoint sets a `Content-Encoding: gzip` header.
+
 ## October 17, 2026
 [v0.14.6-tt6...v0.14.6-tt11](https://github.com/triptechtravel/sequin/compare/v0.14.6-tt6...v0.14.6-tt11)
 

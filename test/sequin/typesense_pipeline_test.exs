@@ -157,6 +157,139 @@ defmodule Sequin.Runtime.TypesensePipelineTest do
     end
   end
 
+  describe "gzip" do
+    setup do
+      account = AccountsFactory.insert_account!()
+
+      transform =
+        FunctionsFactory.insert_function!(
+          account_id: account.id,
+          function_type: :transform,
+          function_attrs: %{body: "record"}
+        )
+
+      MiniElixir.create(transform.id, transform.function.code)
+
+      consumer =
+        ConsumersFactory.insert_sink_consumer!(
+          account_id: account.id,
+          type: :typesense,
+          transform_id: transform.id,
+          sink: %{gzip: true, batch_size: 10}
+        )
+
+      {:ok, %{consumer: consumer}}
+    end
+
+    test "a batch import is sent gzipped, and inflates to the same JSONL", %{consumer: consumer} do
+      test_pid = self()
+
+      messages =
+        for id <- 1..3 do
+          ConsumersFactory.insert_consumer_message!(
+            consumer_id: consumer.id,
+            data: ConsumersFactory.consumer_message_data(action: :insert, record: %{"id" => id, "name" => "place #{id}"})
+          )
+        end
+
+      adapter = fn request ->
+        send(test_pid, {:typesense_request, request})
+        {request, Req.Response.new(status: 200, body: Enum.map_join(1..3, "\n", fn _ -> ~s({"success": true}) end))}
+      end
+
+      start_pipeline!(consumer, adapter)
+      send_test_batch(consumer, messages)
+
+      assert_receive {:typesense_request, request}, 3000
+      assert request.url.path =~ "collections/#{consumer.sink.collection_name}/documents/import"
+      assert Req.Request.get_header(request, "content-encoding") == ["gzip"]
+
+      docs = request.body |> IO.iodata_to_binary() |> :zlib.gunzip() |> String.split("\n") |> Enum.map(&Jason.decode!/1)
+      assert Enum.sort_by(docs, & &1["id"]) == for(id <- 1..3, do: %{"id" => id, "name" => "place #{id}"})
+
+      assert_receive {:ack, _ref, successful, []}, 3000
+      assert length(successful) == 3
+    end
+
+    test "a single document is sent gzipped", %{consumer: consumer} do
+      test_pid = self()
+
+      message =
+        ConsumersFactory.consumer_message(
+          consumer_id: consumer.id,
+          data: ConsumersFactory.consumer_message_data(action: :update, record: %{"id" => 7, "name" => "Aoraki"})
+        )
+
+      adapter = fn request ->
+        send(test_pid, {:typesense_request, request})
+        {request, Req.Response.new(status: 200)}
+      end
+
+      start_pipeline!(consumer, adapter)
+      send_test_batch(consumer, [message])
+
+      assert_receive {:typesense_request, request}, 3000
+      assert Req.Request.get_header(request, "content-encoding") == ["gzip"]
+
+      assert request.body |> IO.iodata_to_binary() |> :zlib.gunzip() |> Jason.decode!() == %{
+               "id" => 7,
+               "name" => "Aoraki"
+             }
+
+      assert_receive {:ack, _ref, [_success], []}, 3000
+    end
+
+    test "a delete has no body to compress", %{consumer: consumer} do
+      test_pid = self()
+
+      message =
+        ConsumersFactory.consumer_message(
+          consumer_id: consumer.id,
+          data: ConsumersFactory.consumer_message_data(action: :delete, record: %{"id" => 9})
+        )
+
+      adapter = fn request ->
+        send(test_pid, {:typesense_request, request})
+        {request, Req.Response.new(status: 200)}
+      end
+
+      start_pipeline!(consumer, adapter)
+      send_test_batch(consumer, [message])
+
+      assert_receive {:typesense_request, request}, 3000
+      assert request.method == :delete
+      assert request.body == nil
+      assert Req.Request.get_header(request, "content-encoding") == []
+
+      assert_receive {:ack, _ref, [_success], []}, 3000
+    end
+
+    test "without gzip, bodies go uncompressed", %{consumer: consumer} do
+      test_pid = self()
+      {:ok, consumer} = Sequin.Consumers.update_sink_consumer(consumer, %{sink: %{type: :typesense, gzip: false}})
+
+      message =
+        ConsumersFactory.consumer_message(
+          consumer_id: consumer.id,
+          data: ConsumersFactory.consumer_message_data(action: :update, record: %{"id" => 7})
+        )
+
+      adapter = fn request ->
+        send(test_pid, {:typesense_request, request})
+        {request, Req.Response.new(status: 200)}
+      end
+
+      start_pipeline!(consumer, adapter)
+      send_test_batch(consumer, [message])
+
+      assert_receive {:typesense_request, request}, 3000
+      assert Req.Request.get_header(request, "content-encoding") == []
+      assert request.body |> IO.iodata_to_binary() |> Jason.decode!() == %{"id" => 7}
+
+      assert_receive {:ack, _ref, [_success], []}, 3000
+    end
+  end
+
   describe "typesense routing" do
     setup do
       account = AccountsFactory.insert_account!()

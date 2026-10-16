@@ -39,6 +39,19 @@
           </span>
         </div>
       </div>
+
+      {#if consumer.sink.gzip}
+        <div>
+          <span class="text-sm text-gray-500">Compression</span>
+          <div class="mt-2">
+            <span
+              class="font-mono bg-slate-50 px-2 py-1 border border-slate-100 rounded-md break-all w-fit"
+            >
+              gzip
+            </span>
+          </div>
+        </div>
+      {/if}
     </div></CardContent
   >
 </Card>

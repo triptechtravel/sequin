@@ -1021,7 +1021,8 @@ defmodule SequinWeb.SinkConsumersLive.Show do
       endpoint_url: sink.endpoint_url,
       collection_name: sink.collection_name,
       batch_size: sink.batch_size,
-      timeout_seconds: sink.timeout_seconds
+      timeout_seconds: sink.timeout_seconds,
+      gzip: sink.gzip
     }
   end
 

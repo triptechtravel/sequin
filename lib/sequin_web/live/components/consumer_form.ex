@@ -961,7 +961,8 @@ defmodule SequinWeb.Components.ConsumerForm do
       "collection_name" => sink["collection_name"],
       "api_key" => sink["api_key"],
       "batch_size" => sink["batch_size"],
-      "timeout_seconds" => sink["timeout_seconds"]
+      "timeout_seconds" => sink["timeout_seconds"],
+      "gzip" => sink["gzip"]
     }
   end
 
@@ -1256,7 +1257,8 @@ defmodule SequinWeb.Components.ConsumerForm do
       "collection_name" => sink.collection_name,
       "api_key" => sink.api_key,
       "batch_size" => sink.batch_size,
-      "timeout_seconds" => sink.timeout_seconds
+      "timeout_seconds" => sink.timeout_seconds,
+      "gzip" => sink.gzip
     }
   end
 

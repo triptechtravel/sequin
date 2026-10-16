@@ -24,6 +24,10 @@ The Typesense sink indexes documents into a Typesense collection, using the Type
 
     The API key for authenticating with your Typesense server.
 
+- **Gzip requests** (optional)
+
+    Compress request bodies with gzip, sending `Content-Encoding: gzip`. Off by default. Typesense itself doesn't accept compressed requests, so turn this on only when the endpoint URL is a proxy in front of Typesense that decompresses them. That cuts the bytes sent when Sequin's outbound transfer is metered.
+
 ## Transform requirements
 
 Your [transform](/reference/transforms) must return a document matching the schema of the [Typesense collection](https://typesense.org/docs/28.0/api/collections.html#create-a-collection).

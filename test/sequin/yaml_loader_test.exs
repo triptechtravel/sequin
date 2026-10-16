@@ -21,6 +21,7 @@ defmodule Sequin.YamlLoaderTest do
   alias Sequin.Consumers.SnsSink
   alias Sequin.Consumers.SourceTable, as: ConsumersSourceTable
   alias Sequin.Consumers.SqsSink
+  alias Sequin.Consumers.TypesenseSink
   alias Sequin.Databases
   alias Sequin.Databases.PostgresDatabase
   alias Sequin.Databases.PostgresDatabasePrimary
@@ -1531,6 +1532,36 @@ defmodule Sequin.YamlLoaderTest do
       assert %{type: "postgres", table_name: "mirror.users"} = exported
       refute Jason.encode!(exported) =~ "sensitive-password"
       assert Jason.encode!(Sequin.Transforms.to_external(consumer.sink, true)) =~ "sensitive-password"
+    end
+
+    test "creates typesense sink consumer, gzip off unless asked for" do
+      assert :ok =
+               YamlLoader.apply_from_yml!("""
+               #{account_and_db_yml()}
+
+               sinks:
+                 - name: "typesense-proxied"
+                   database: "test-db"
+                   destination:
+                     type: "typesense"
+                     endpoint_url: "https://proxy.example.com/sequin"
+                     collection_name: "places"
+                     api_key: "sensitive-key"
+                     gzip: true
+                 - name: "typesense-direct"
+                   database: "test-db"
+                   destination:
+                     type: "typesense"
+                     endpoint_url: "https://typesense.example.com"
+                     collection_name: "places"
+                     api_key: "sensitive-key"
+               """)
+
+      sinks = SinkConsumer |> Repo.all() |> Map.new(&{&1.name, &1.sink})
+
+      assert %TypesenseSink{endpoint_url: "https://proxy.example.com/sequin", gzip: true} = sinks["typesense-proxied"]
+      assert %TypesenseSink{endpoint_url: "https://typesense.example.com", gzip: false} = sinks["typesense-direct"]
+      assert %{gzip: true} = Sequin.Transforms.to_external(sinks["typesense-proxied"], false)
     end
 
     test "a postgres sink without a routing function needs a table" do

@@ -315,6 +315,7 @@ destination:
   api_key: "your-api-key"          # Required
   batch_size: 40                   # Optional, messages per batch, default: 40, max: 10000
   timeout_seconds: 5               # Optional, seconds to wait for response, default: 5, max: 300
+  gzip: false                      # Optional, gzip request bodies (for a proxy that inflates them), default: false
 ```
 
 #### Meilisearch sink
