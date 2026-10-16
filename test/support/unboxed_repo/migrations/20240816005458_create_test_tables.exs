@@ -4,7 +4,7 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
 
   alias Sequin.Constants
 
-  def my_version, do: 1
+  def my_version, do: 2
 
   def check_version!(repo) do
     if my_version() != get_version(repo) do
@@ -177,7 +177,115 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
     execute Sequin.Postgres.logical_messages_table_ddl(),
             "drop table if exists #{Constants.logical_messages_table_name()}"
 
-    execute "create publication characters_publication for table \"Characters\", characters_ident_full, characters_multi_pk, characters_detailed, test_event_logs_partitioned, #{Constants.logical_messages_table_name()}",
+    # One column per Postgres type Sequin may meet, for asserting that a backfilled row and the
+    # same row streamed through logical replication produce identical records.
+    execute "CREATE EXTENSION IF NOT EXISTS citext"
+    execute "CREATE EXTENSION IF NOT EXISTS hstore"
+
+    execute "CREATE TYPE money_with_currency AS (currency_code varchar, amount numeric)",
+            "DROP TYPE money_with_currency"
+
+    execute "CREATE TYPE postal_address AS (street text, city text, unit int)", "DROP TYPE postal_address"
+
+    execute """
+            CREATE TABLE all_column_types (
+              id serial PRIMARY KEY,
+              c_bool boolean,
+              c_int2 smallint,
+              c_int4 integer,
+              c_int8 bigint,
+              c_numeric numeric,
+              c_numeric_scaled numeric(10, 4),
+              c_numeric_nan numeric,
+              c_float4 real,
+              c_float8 double precision,
+              c_float8_special double precision,
+              c_money money,
+              c_char char(5),
+              c_varchar varchar(20),
+              c_text text,
+              c_name name,
+              c_qchar "char",
+              c_citext citext,
+              c_bytea bytea,
+              c_date date,
+              c_date_infinity date,
+              c_time time,
+              c_timetz timetz,
+              c_timestamp timestamp,
+              c_timestamp_infinity timestamp,
+              c_timestamptz timestamptz,
+              c_interval interval,
+              c_uuid uuid,
+              c_json json,
+              c_jsonb jsonb,
+              c_inet inet,
+              c_cidr cidr,
+              c_macaddr macaddr,
+              c_macaddr8 macaddr8,
+              c_bit bit(4),
+              c_varbit varbit,
+              c_point point,
+              c_line line,
+              c_lseg lseg,
+              c_box box,
+              c_path path,
+              c_polygon polygon,
+              c_circle circle,
+              c_tsvector tsvector,
+              c_tsquery tsquery,
+              c_xml xml,
+              c_pg_lsn pg_lsn,
+              c_oid oid,
+              c_regclass regclass,
+              c_int4range int4range,
+              c_int8range int8range,
+              c_numrange numrange,
+              c_tsrange tsrange,
+              c_tstzrange tstzrange,
+              c_daterange daterange,
+              c_empty_range int4range,
+              c_unbounded_range int4range,
+              c_int4multirange int4multirange,
+              c_hstore hstore,
+              c_vector vector(3),
+              c_halfvec halfvec(3),
+              c_sparsevec sparsevec(5),
+              c_enum character_status,
+              c_domain positive_int,
+              c_composite money_with_currency,
+              c_composite_tricky postal_address,
+              c_bool_arr boolean[],
+              c_int4_arr integer[],
+              c_int4_2d_arr integer[][],
+              c_int8_arr bigint[],
+              c_numeric_arr numeric[],
+              c_float8_arr double precision[],
+              c_text_arr text[],
+              c_varchar_arr varchar[],
+              c_bytea_arr bytea[],
+              c_date_arr date[],
+              c_time_arr time[],
+              c_timetz_arr timetz[],
+              c_timestamp_arr timestamp[],
+              c_timestamptz_arr timestamptz[],
+              c_interval_arr interval[],
+              c_uuid_arr uuid[],
+              c_json_arr json[],
+              c_jsonb_arr jsonb[],
+              c_inet_arr inet[],
+              c_money_arr money[],
+              c_xml_arr xml[],
+              c_int4range_arr int4range[],
+              c_enum_arr character_status[],
+              c_domain_arr positive_int[],
+              c_composite_arr money_with_currency[],
+              updated_at timestamp NOT NULL DEFAULT now()
+            )
+            """,
+            "DROP TABLE all_column_types"
+
+    execute "create publication characters_publication for table \"Characters\", characters_ident_full, characters_multi_pk, characters_detailed, all_column_types, test_event_logs_partitioned, #{Constants.logical_messages_table_name()}",
             "drop publication characters_publication"
 
     create table(:sequin_events) do

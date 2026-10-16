@@ -10,8 +10,10 @@ defmodule Sequin.Postgres do
   alias Sequin.Databases.DatabaseUpdateWorker
   alias Sequin.Databases.PostgresDatabase
   alias Sequin.Databases.PostgresDatabaseTable
+  alias Sequin.DebouncedLogger
   alias Sequin.Error
   alias Sequin.Error.ValidationError
+  alias Sequin.Postgres.ValueCaster
   alias Sequin.Repo
   alias Sequin.WalPipeline.SourceTable
 
@@ -710,13 +712,40 @@ defmodule Sequin.Postgres do
   end
 
   @doc """
-  For crafting a `select *`, but only selecting columns that are considered "safe"
-  (i.e. we have a Postgrex encoder available)
+  For crafting a `select *` whose values match what logical replication emits for the same row.
+
+  Columns that Postgrex can't decode into that representation (composites, geometric and
+  network types, enums/domains/composites in arrays, extension types, ...) are selected as
+  Postgres's text output for the type, which is exactly what replication sends, and are cast
+  by `load_rows/2` with the same `ValueCaster` the replication path uses.
   """
   def safe_select_columns(%PostgresDatabaseTable{} = table) do
-    table.columns
-    |> Enum.filter(&has_encoder?/1)
-    |> Enum.map_join(", ", &quote_name(&1.name))
+    Enum.map_join(table.columns, ", ", fn %PostgresDatabaseTable.Column{} = column ->
+      name = quote_name(column.name)
+
+      if select_as_text?(column) do
+        # format/2 renders via the type's output function, unlike ::text which, for e.g. inet
+        # and char(n), goes through a cast with different output. num_nulls/1, unlike
+        # `is not null`, is true for a composite with some null fields.
+        "case when num_nulls(#{name}) = 0 then format('%s', #{name}) end as #{name}"
+      else
+        name
+      end
+    end)
+  end
+
+  # Postgrex decodes composites to tuples, which have no JSON representation
+  defp select_as_text?(%{pg_typtype: "c"}), do: true
+  # Postgrex raises on -infinity dates, failing the whole batch
+  defp select_as_text?(%{type: type}) when type in ["date", "date[]"], do: true
+  defp select_as_text?(column), do: not has_encoder?(column)
+
+  # The type name logical replication reports for the column, which ValueCaster dispatches on
+  defp replication_type(%{type: type}) do
+    case String.split(type, "[]", parts: 2) do
+      [element, _] -> "_" <> element
+      [type] -> type
+    end
   end
 
   def sequence_nextval(sequence_name) do
@@ -892,47 +921,71 @@ defmodule Sequin.Postgres do
       Map.new(table.columns, fn col ->
         value = row[col.name]
 
-        casted_val =
-          cond do
-            is_nil(value) ->
-              nil
-
-            is_struct(value, Pgvector) ->
-              Pgvector.to_list(value)
-
-            # Binary data types
-            col.type in ["bytea", "bit", "varbit"] and String.starts_with?(value, "\\x") ->
-              value
-
-            col.type in ["bytea", "bit", "varbit"] ->
-              "\\x" <> Base.encode16(value, case: :lower)
-
-            # UUID handling
-            col.type == "uuid" ->
-              Sequin.String.binary_to_string!(value)
-
-            col.type in ["uuid[]", "_uuid"] and is_list(value) ->
-              Enum.map(value, &Sequin.String.binary_to_string!/1)
-
-            # Range type handling
-            is_struct(value, Postgrex.Range) ->
-              format_range(value)
-
-            is_struct(value, Postgrex.Interval) ->
-              format_interval(value)
-
-            # This is the catch-all when encode is not implemented
-            Jason.Encoder.impl_for(value) == Jason.Encoder.Any ->
-              Logger.debug("[Postgres] No Jason.Encoder for #{inspect(value)}", column: col.name, table: table.name)
-              nil
-
-            true ->
-              value
-          end
-
-        {col.name, casted_val}
+        if select_as_text?(col) and is_binary(value) do
+          {:ok, value} = ValueCaster.cast(replication_type(col), value)
+          {col.name, value}
+        else
+          {col.name, load_value(table, col, String.trim_trailing(col.type, "[]"), value)}
+        end
       end)
     end)
+  end
+
+  @float_types ["real", "double precision", "float4", "float8"]
+
+  # Converts a decoded value to what logical replication emits for it (see ValueCaster), so
+  # backfilled and streamed rows agree. `type` is the element type for array columns.
+  defp load_value(_table, _col, _type, nil), do: nil
+
+  defp load_value(table, col, type, values) when is_list(values) and type not in ["json", "jsonb"] do
+    Enum.map(values, &load_value(table, col, type, &1))
+  end
+
+  defp load_value(table, col, type, value) do
+    cond do
+      is_struct(value, Pgvector) ->
+        Pgvector.to_list(value)
+
+      type == "bytea" and String.starts_with?(value, "\\x") ->
+        value
+
+      type == "bytea" ->
+        "\\x" <> Base.encode16(value, case: :lower)
+
+      # UUID handling
+      type == "uuid" ->
+        Sequin.String.binary_to_string!(value)
+
+      # Range type handling
+      is_struct(value, Postgrex.Range) ->
+        format_range(value)
+
+      is_struct(value, Postgrex.Interval) ->
+        format_interval(value)
+
+      # Special values come through replication as Postgres's text for them
+      value in [:inf, :"-inf", :NaN] and type in @float_types ->
+        %{inf: "Infinity", "-inf": "-Infinity", NaN: "NaN"}[value]
+
+      value in [:inf, :"-inf"] ->
+        %{inf: "infinity", "-inf": "-infinity"}[value]
+
+      is_struct(value, Decimal) and (Decimal.nan?(value) or Decimal.inf?(value)) ->
+        Decimal.to_string(value)
+
+      # This is the catch-all when encode is not implemented. safe_select_columns/1 casts the
+      # types we know about to text, so landing here means a column is silently losing data.
+      Jason.Encoder.impl_for(value) == Jason.Encoder.Any ->
+        DebouncedLogger.warning(
+          "[Postgres] Dropping value with no JSON representation (column=#{table.schema}.#{table.name}.#{col.name}, type=#{col.type})",
+          %DebouncedLogger.Config{dedupe_key: {:no_json_encoder, table.schema, table.name, col.name}}
+        )
+
+        nil
+
+      true ->
+        value
+    end
   end
 
   # Helper function to format ranges consistently
@@ -958,23 +1011,18 @@ defmodule Sequin.Postgres do
   @safe_types [
     "array",
     "bigint",
-    "bit",
     "bool",
     "boolean",
-    "box",
+    "bpchar",
     "bytea",
     "char",
     "character varying",
-    "cidr",
-    "circle",
     "citext",
     "date",
     "daterange",
     "double precision",
     "float4",
     "float8",
-    "hstore",
-    "inet",
     "int2",
     "int4",
     "int8",
@@ -982,48 +1030,32 @@ defmodule Sequin.Postgres do
     "interval",
     "json",
     "jsonb",
-    "line",
-    "lseg",
-    "macaddr",
     "name",
     "numeric",
     "oid",
-    "path",
-    "point",
-    "polygon",
     "real",
     "smallint",
     "text",
-    "tid",
-    "tsvector",
     "uuid",
     "varchar",
-    "varbit",
     "vector",
     "void"
   ]
 
   # Catch-all for time formats
-  defp has_encoder?(%PostgresDatabaseTable.Column{type: "time" <> _rest}) do
+  defp has_encoder?(%{type: "time" <> _rest}) do
     true
   end
 
-  # For composite types, enums, and domains, we don't yet store the underlying "base" type
+  # For enums and domains, we don't yet store the underlying "base" type
   # For now, assume/hope that Postgrex has an encoder for the base type
   # In the future, we should store the base type in the column to determine if Postgrex can encode it
-  defp has_encoder?(%PostgresDatabaseTable.Column{pg_typtype: typtype}) when typtype in ["c", "d", "e"] do
+  defp has_encoder?(%{pg_typtype: typtype}) when typtype in ["d", "e"] do
     true
   end
 
-  defp has_encoder?(%PostgresDatabaseTable.Column{type: type} = column) do
-    type = String.trim_trailing(type, "[]")
-
-    if type in @safe_types do
-      true
-    else
-      Logger.info("[Postgres] Unsupported column type (type=#{inspect(type)}, col=#{column.name})")
-      false
-    end
+  defp has_encoder?(%{type: type}) do
+    String.trim_trailing(type, "[]") in @safe_types
   end
 
   @doc """
