@@ -740,11 +740,10 @@ defmodule Sequin.Consumers do
         |> Enum.map(fn attnum ->
           Enum.find(columns, &(&1.attnum == attnum))
         end)
-        |> Enum.map(fn %PostgresDatabaseTable.Column{name: name} ->
-          message.data.record[name]
-        end)
         |> Enum.filter(& &1)
-        |> Enum.map_join(":", &to_string(&1))
+        |> Enum.map_join(":", fn %PostgresDatabaseTable.Column{} = column ->
+          column.type |> decoded_record_value(message.data.record[column.name]) |> group_value()
+        end)
       end
     end)
   end
@@ -759,8 +758,38 @@ defmodule Sequin.Consumers do
         Enum.find(fields, &(&1.column_attnum == attnum))
       end)
       |> Enum.filter(& &1)
-      |> Enum.map_join(":", &to_string(&1.value))
+      |> Enum.map_join(":", &group_value(&1.value))
     end)
+  end
+
+  # Both generate_group_id/2 (live messages) and generate_group_id/3 (messages reloaded from
+  # persistence) must produce the same group for a row, or per-group ordering and backfill/CDC
+  # conflict detection break across a restart.
+  defp group_value(nil), do: ""
+  defp group_value(value) when is_binary(value), do: value
+  defp group_value(value) when is_list(value) or (is_map(value) and not is_struct(value)), do: Jason.encode!(value)
+  defp group_value(value), do: to_string(value)
+
+  # A persisted record went through JSON, so temporal and numeric values came back as strings.
+  # Restore the values live messages carry (see ValueCaster), so group_value/1 renders them alike.
+  defp decoded_record_value(_type, value) when not is_binary(value), do: value
+
+  defp decoded_record_value(type, value) do
+    parsed =
+      case type do
+        "timestamp with time zone" -> with {:ok, dt, _offset} <- DateTime.from_iso8601(value), do: {:ok, dt}
+        "timestamp" <> _ -> NaiveDateTime.from_iso8601(value)
+        "date" -> Date.from_iso8601(value)
+        "time" <> _ -> Elixir.Time.from_iso8601(value)
+        "numeric" -> Decimal.parse(value)
+        _ -> :error
+      end
+
+    case parsed do
+      {:ok, decoded} -> decoded
+      {%Decimal{} = decoded, ""} -> decoded
+      _ -> value
+    end
   end
 
   # Private helper that handles the common group ID generation logic
