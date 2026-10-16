@@ -5,6 +5,9 @@ defmodule Sequin.MessageConsistencyCheckWorkerTest do
   alias Sequin.Runtime.MessageConsistencyCheckWorker
   alias Sequin.Runtime.MessageLedgers
 
+  # Logging undelivered cursors is part of what's tested
+  @moduletag :capture_log
+
   describe "audit_and_trim_undelivered_cursors/2" do
     test "logs and trims undelivered messages" do
       # Create a sink consumer

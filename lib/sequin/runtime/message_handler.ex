@@ -7,10 +7,12 @@ defmodule Sequin.Runtime.MessageHandler do
   alias Sequin.Consumers
   alias Sequin.Consumers.SinkConsumer
   alias Sequin.Databases.PostgresDatabase
+  alias Sequin.Databases.PostgresDatabaseTable
   alias Sequin.Error.InvariantError
   alias Sequin.Functions.TestMessages
   alias Sequin.Health
   alias Sequin.Health.Event
+  alias Sequin.Postgres
   alias Sequin.Replication
   alias Sequin.Replication.PostgresReplicationSlot
   alias Sequin.Replication.WalEvent
@@ -310,7 +312,9 @@ defmodule Sequin.Runtime.MessageHandler do
   defp load_unchanged_toasts(%Context{} = ctx, messages) do
     # Skip if no messages have unchanged TOASTs
     if Enum.any?(messages, &has_unchanged_toast?/1) do
-      load_unchanged_toasts_from_old(ctx, messages)
+      messages
+      |> load_unchanged_toasts_from_old()
+      |> load_unchanged_toasts_from_source(ctx)
     else
       messages
     end
@@ -322,14 +326,11 @@ defmodule Sequin.Runtime.MessageHandler do
     Enum.any?(fields, fn %Message.Field{value: value} -> value == :unchanged_toast end)
   end
 
-  defp load_unchanged_toasts_from_old(%Context{} = ctx, messages) do
+  # Under replica identity full, an update's old tuple carries every value
+  defp load_unchanged_toasts_from_old(messages) do
     messages =
       Enum.reduce(messages, [], fn
         %Message{action: :update, old_fields: nil} = message, messages_acc ->
-          if has_unchanged_toast?(message) do
-            put_unchanged_toast_health_event(ctx, message)
-          end
-
           [message | messages_acc]
 
         %Message{action: :update, fields: fields, old_fields: old_fields} = message, messages_acc ->
@@ -350,6 +351,60 @@ defmodule Sequin.Runtime.MessageHandler do
       end)
 
     Enum.reverse(messages)
+  end
+
+  # Otherwise, read the values from the row. They may be newer than the update, but never older
+  # than it, so a sink converges on the row's state rather than storing "unchanged_toast".
+  defp load_unchanged_toasts_from_source(messages, %Context{} = ctx) do
+    rows_by_table_and_pks =
+      messages
+      |> Enum.filter(&has_unchanged_toast?/1)
+      |> Enum.group_by(& &1.table_oid)
+      |> Map.new(fn {table_oid, table_messages} ->
+        {table_oid, fetch_rows_for_toast(ctx, table_oid, Enum.map(table_messages, & &1.ids))}
+      end)
+
+    Enum.map(messages, fn message ->
+      with true <- has_unchanged_toast?(message),
+           %{} = row <- get_in(rows_by_table_and_pks, [message.table_oid, message.ids]) do
+        fields =
+          Enum.map(message.fields, fn
+            %Message.Field{value: :unchanged_toast} = field -> %{field | value: Map.fetch!(row, field.column_name)}
+            field -> field
+          end)
+
+        %{message | fields: fields}
+      else
+        false ->
+          message
+
+        nil ->
+          # Fetch failed, or the row is gone (its delete follows)
+          put_unchanged_toast_health_event(ctx, message)
+          message
+      end
+    end)
+  end
+
+  # On failure, the values stay "unchanged_toast" rather than stalling or crashing replication
+  defp fetch_rows_for_toast(%Context{} = ctx, table_oid, record_pks_list) do
+    case Enum.find(ctx.postgres_database.tables, &(&1.oid == table_oid)) do
+      nil ->
+        %{}
+
+      %PostgresDatabaseTable{} = table ->
+        case Postgres.fetch_rows_by_record_pks(ctx.postgres_database, table, record_pks_list, timeout: 15_000) do
+          {:ok, rows} ->
+            rows
+
+          {:error, error} ->
+            Logger.warning("[MessageHandler] Failed to load unchanged TOAST values: #{inspect(error)}",
+              table_oid: table_oid
+            )
+
+            %{}
+        end
+    end
   end
 
   defp put_unchanged_toast_health_event(%Context{} = ctx, message) do

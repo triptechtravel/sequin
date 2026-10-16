@@ -632,7 +632,8 @@ defmodule Sequin.PostgresReplicationTest do
       [consumer_event] = receive_messages(consumer, 1)
       commit_lsn = consumer_event.commit_lsn
 
-      assert {:ok, ^commit_lsn} = Postgres.confirmed_flush_lsn(db, replication_slot())
+      # The slot may first advance past other WAL (e.g. other tests' cleanup), so wait for the ack
+      assert_eventually Postgres.confirmed_flush_lsn(db, replication_slot()) == {:ok, commit_lsn}, 1000
     end
 
     @tag :jepsen
@@ -1618,6 +1619,46 @@ defmodule Sequin.PostgresReplicationTest do
 
       assert backfilled.group_id == streamed.group_id
       assert reloaded.group_id == streamed.group_id
+    end
+
+    test "an update that leaves a TOASTed value unchanged carries the value", ctx do
+      # Large and incompressible, so Postgres stores it out of line and, under the default replica
+      # identity, replicates an update that doesn't touch it as "unchanged"
+      %{rows: [[id, toasted]]} =
+        UnboxedRepo.query!("""
+        insert into all_column_types (c_text, c_int4)
+        select string_agg(md5(random()::text), '') , 1 from generate_series(1, 400)
+        returning id, c_text
+        """)
+
+      UnboxedRepo.query!("update all_column_types set c_int4 = 2 where id = $1", [id])
+
+      [insert, update] = ctx.consumer |> receive_messages(2) |> Enum.sort_by(& &1.commit_lsn)
+
+      assert insert.data.record["c_text"] == toasted
+      assert update.data.action == :update
+      assert update.data.record["c_int4"] == 2
+      assert update.data.record["c_text"] == toasted
+    end
+
+    test "an unchanged TOASTed value of a row deleted since is left as is, without failing", ctx do
+      %{rows: [[id]]} =
+        UnboxedRepo.query!("""
+        insert into all_column_types (c_text, c_int4)
+        select string_agg(md5(random()::text), ''), 1 from generate_series(1, 400)
+        returning id
+        """)
+
+      # Committed together, so the row is gone by the time the update is processed
+      UnboxedRepo.transaction(fn ->
+        UnboxedRepo.query!("update all_column_types set c_int4 = 2 where id = $1", [id])
+        UnboxedRepo.query!("delete from all_column_types where id = $1", [id])
+      end)
+
+      messages = ctx.consumer |> receive_messages(3) |> Enum.sort_by(&{&1.commit_lsn, &1.commit_idx})
+
+      assert [:insert, :update, :delete] = Enum.map(messages, & &1.data.action)
+      assert Enum.at(messages, 1).data.record["c_text"] == :unchanged_toast
     end
 
     @tag table: "pk_types"

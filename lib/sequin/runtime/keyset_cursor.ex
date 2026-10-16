@@ -88,7 +88,7 @@ defmodule Sequin.Runtime.KeysetCursor do
       "true"
     else
       quoted_columns = columns |> quoted_column_names() |> Enum.join(", ")
-      rhs = "(#{Enum.map_join(1..Enum.count(columns), ", ", fn _ -> "?" end)})"
+      rhs = "(#{Enum.map_join(columns, ", ", &"(?::text)::#{&1.type}")})"
 
       # (a, b) > (x, <unbounded>) is a >= x, as nothing sorts before an unbounded b
       operator =
@@ -109,58 +109,36 @@ defmodule Sequin.Runtime.KeysetCursor do
 
   @spec order_by_sql(Table.t(), String.t()) :: String.t()
   def order_by_sql(%Table{} = table, direction \\ "asc") do
+    # Qualified, as a bare name in ORDER BY refers to a select-list alias first, and backfills
+    # select some columns as text under their own name (see Postgres.safe_select_columns/1).
+    # Ordering by that text instead of the column disagrees with where_sql/3, skipping rows.
+    qualified_table = Postgres.quote_name(table.schema, table.name)
+
     table
     |> cursor_columns()
     |> quoted_column_names()
-    |> Enum.map_join(", ", &"#{&1} #{direction}")
+    |> Enum.map_join(", ", &"#{qualified_table}.#{&1} #{direction}")
   end
 
-  @spec casted_cursor_values(Table.t(), map()) :: [any()]
+  @doc """
+  Cursor values as Postgres text, in the order of where_sql/3's placeholders, which cast each
+  back to its column's type. Text round-trips every type (money, inet, composites, infinite
+  dates, ...), including the strings that cursors persisted as JSON hold.
+  """
+  @spec casted_cursor_values(Table.t(), map()) :: [String.t()]
   def casted_cursor_values(%Table{} = table, cursor) do
-    columns = bounded_columns(table, cursor)
-
-    Enum.map(columns, fn %Table.Column{} = column ->
-      val = Map.fetch!(cursor, column.attnum)
-      cast_value(column, val)
-    end)
+    table
+    |> bounded_columns(cursor)
+    |> Enum.map(&cursor_text(Map.fetch!(cursor, &1.attnum)))
   end
 
-  defp cast_value(%Table.Column{type: "uuid"}, val) do
-    Sequin.String.string_to_binary!(val)
-  end
-
-  defp cast_value(%Table.Column{type: type}, val)
-       when is_binary(val) and type in ["timestamp", "timestamp without time zone"] do
-    NaiveDateTime.from_iso8601!(val)
-  end
-
-  defp cast_value(%Table.Column{type: "timestamp with time zone"}, val) when is_binary(val) do
-    {:ok, dt, _offset} = DateTime.from_iso8601(val)
-    dt
-  end
-
-  defp cast_value(%Table.Column{type: "date"}, val) when is_binary(val) do
-    Date.from_iso8601!(val)
-  end
-
-  defp cast_value(%Table.Column{type: type}, val) when type in ["time", "time without time zone"] and is_binary(val) do
-    Time.from_iso8601!(val)
-  end
-
-  defp cast_value(%Table.Column{type: "time with time zone"}, val) when is_binary(val) do
-    # Strip timezone info as we don't need it for ordering
-    val
-    |> String.split("+")
-    |> List.first()
-    |> Time.from_iso8601!()
-  end
-
-  defp cast_value(%Table.Column{type: type}, val)
-       when type in ["integer", "bigint", "smallint", "serial"] and is_binary(val) do
-    String.to_integer(val)
-  end
-
-  defp cast_value(_, val), do: val
+  defp cursor_text(value) when is_binary(value), do: value
+  defp cursor_text(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp cursor_text(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp cursor_text(%Date{} = value), do: Date.to_iso8601(value)
+  defp cursor_text(%Time{} = value), do: Time.to_iso8601(value)
+  defp cursor_text(%Decimal{} = value), do: Decimal.to_string(value, :normal)
+  defp cursor_text(value), do: to_string(value)
 
   @spec cursor_from_row(Table.t(), map()) :: map()
   def cursor_from_row(%Table{} = table, row) do

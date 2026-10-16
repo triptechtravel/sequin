@@ -4,7 +4,7 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
 
   alias Sequin.Constants
 
-  def my_version, do: 3
+  def my_version, do: 4
 
   def check_version!(repo) do
     if my_version() != get_version(repo) do
@@ -299,6 +299,20 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
             )
             """,
             "DROP TABLE pk_types"
+
+    # A primary key of types selected as text, and so carried in backfill cursors as text,
+    # for asserting keyset pagination works for any key type
+    execute """
+            CREATE TABLE pk_text_types (
+              pk_date date,
+              pk_inet inet,
+              pk_money money,
+              pk_composite money_with_currency,
+              name text,
+              PRIMARY KEY (pk_date, pk_inet, pk_money, pk_composite)
+            )
+            """,
+            "DROP TABLE pk_text_types"
 
     execute "create publication characters_publication for table \"Characters\", characters_ident_full, characters_multi_pk, characters_detailed, all_column_types, pk_types, test_event_logs_partitioned, #{Constants.logical_messages_table_name()}",
             "drop publication characters_publication"

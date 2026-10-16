@@ -173,7 +173,8 @@ defmodule Sequin.Postgres.BenchmarkSourceTest do
     receive do
       {:messages_received, messages} -> receive_messages(count, acc ++ messages)
     after
-      1_000 -> acc
+      # Generous, as the producer is slow to start under a full, parallel test run
+      5_000 -> acc
     end
   end
 end

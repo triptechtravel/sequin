@@ -537,16 +537,9 @@ defmodule Sequin.Runtime.WalPipelineServer do
     source_database = get_source_database(state.wal_pipelines, pipeline_id)
     table = get_table(source_database, table_oid)
 
-    case Postgres.query(source_database, toast_query(table, events), toast_query_params(events)) do
-      {:ok, %Postgrex.Result{} = result} ->
-        raw_rows = Postgres.result_to_maps(result)
-
-        # Loaded like a backfill, so values match what replication emits for them, keyed by the
-        # same Postgres text as event.record_pks
-        raw_rows
-        |> Enum.map(&Map.fetch!(&1, Postgres.record_pks_column()))
-        |> Enum.zip(Postgres.load_rows(table, raw_rows))
-        |> Map.new(fn {pks, values} -> {{table.oid, pks}, values} end)
+    case Postgres.fetch_rows_by_record_pks(source_database, table, Enum.map(events, & &1.record_pks)) do
+      {:ok, rows_by_pks} ->
+        Map.new(rows_by_pks, fn {pks, values} -> {{table.oid, pks}, values} end)
 
       {:error, error} ->
         Logger.error("[WalPipelineServer] Failed to fetch TOAST values: #{inspect(error)}")
@@ -565,24 +558,6 @@ defmodule Sequin.Runtime.WalPipelineServer do
     |> Map.fetch!(:tables)
     |> Enum.find(&(&1.oid == table_oid))
   end
-
-  defp toast_query(%PostgresDatabaseTable{} = table, events) do
-    # Keys are passed as text and cast to the column's type in SQL, which keeps the comparison
-    # indexable and works for any key type
-    pk_match =
-      table.columns
-      |> Enum.filter(& &1.is_pk?)
-      |> Enum.sort_by(& &1.attnum)
-      |> Enum.map_join(" AND ", &"#{Postgres.quote_name(&1.name)} = (?::text)::#{&1.type}")
-
-    Postgres.parameterize_sql("""
-    SELECT #{Postgres.safe_select_columns(table)}, #{Postgres.record_pks_sql(table)}
-    FROM #{Postgres.quote_name(table.schema, table.name)}
-    WHERE #{Enum.map_join(events, " OR ", fn _event -> "(#{pk_match})" end)}
-    """)
-  end
-
-  defp toast_query_params(events), do: Enum.flat_map(events, & &1.record_pks)
 
   defp replace_toast_values(wal_events, loaded_toasts) do
     Enum.map(wal_events, fn event ->

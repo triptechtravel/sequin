@@ -214,6 +214,32 @@ defmodule Sequin.TableReaderTest do
       assert message.record_pks == ["-5"]
     end
 
+    test "pages through a table keyed on types carried in cursors as text", %{
+      db: db,
+      backfill: backfill,
+      tables: tables,
+      character_consumer: consumer
+    } do
+      Repo.query!("""
+      insert into pk_text_types (pk_date, pk_inet, pk_money, pk_composite, name) values
+        ('-infinity', '10.0.0.1', 1, row('EUR', 1), 'a'),
+        ('2024-02-29', '10.0.0.1', 1, row('EUR', 1), 'b'),
+        ('2024-02-29', '10.0.0.2', 1, row('EUR', 1), 'c'),
+        ('2024-02-29', '10.0.0.2', 2.5, row('EUR', 1), 'd'),
+        ('2024-02-29', '10.0.0.2', 2.5, row('USD', 1), 'e'),
+        ('infinity', '10.0.0.1', 1, row('EUR', 1), 'f')
+      """)
+
+      table = Enum.find(tables, &(&1.name == "pk_text_types"))
+      date_attnum = Enum.find(table.columns, &(&1.name == "pk_date")).attnum
+
+      # Ordered by the primary key, and by a sort column holding infinite dates
+      for table <- [table, %{table | sort_column_attnum: date_attnum}] do
+        names = page_names(db, consumer, backfill, table, KeysetCursor.min_cursor(table), [])
+        assert names == ~w(a b c d e f)
+      end
+    end
+
     test "works with nil sort column", %{
       db: db,
       backfill: backfill,
@@ -513,4 +539,15 @@ defmodule Sequin.TableReaderTest do
   #     indifferent_keys: true
   #   )
   # end
+
+  # Fetches one row per batch, so every batch after the first uses a cursor from a row
+  defp page_names(db, consumer, backfill, table, cursor, acc) do
+    case TableReader.fetch_batch(db, consumer, backfill, table, cursor, limit: 1, include_min: acc == []) do
+      {:ok, %{messages: [], next_cursor: nil}} ->
+        Enum.reverse(acc)
+
+      {:ok, %{messages: [message], next_cursor: next_cursor}} ->
+        page_names(db, consumer, backfill, table, next_cursor, [message.data.record["name"] | acc])
+    end
+  end
 end
