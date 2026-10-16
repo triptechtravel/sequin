@@ -15,6 +15,7 @@ defmodule Sequin.Runtime.TableReaderServerTest do
   alias Sequin.Factory.DatabasesFactory
   alias Sequin.Factory.ReplicationFactory
   alias Sequin.Repo
+  alias Sequin.Runtime.KeysetCursor
   alias Sequin.Runtime.PageSizeOptimizer
   alias Sequin.Runtime.PageSizeOptimizerMock
   alias Sequin.Runtime.SlotMessageStore
@@ -189,6 +190,48 @@ defmodule Sequin.Runtime.TableReaderServerTest do
       # Verify that the consumer's backfill has been updated
       backfill = Repo.reload(backfill)
       assert backfill.state == :completed
+    end
+
+    test "backfills every row of a table keyed on types carried in cursors as text", %{database: database} do
+      Repo.query!("""
+      insert into pk_text_types (pk_date, pk_inet, pk_money, pk_composite, name) values
+        ('-infinity', '10.0.0.1', 1, row('EUR', 1), 'a'),
+        ('2024-02-29', '10.0.0.1', 9, row('EUR', 1), 'b'),
+        ('2024-02-29', '10.0.0.1', 10, row('EUR', 1), 'c'),
+        ('2024-02-29', '10.0.0.2', 1, row('EUR', 1), 'd'),
+        ('2024-02-29', '10.0.0.2', 1, row('USD', 1), 'e'),
+        ('infinity', '10.0.0.1', 1, row('EUR', 1), 'f')
+      """)
+
+      table = Sequin.Enum.find!(database.tables, &(&1.name == "pk_text_types"))
+
+      consumer =
+        ConsumersFactory.insert_sink_consumer!(
+          account_id: database.account_id,
+          replication_slot_id:
+            ReplicationFactory.insert_postgres_replication!(
+              account_id: database.account_id,
+              postgres_database_id: database.id
+            ).id,
+          source: ConsumersFactory.source_attrs(include_table_oids: [table.oid])
+        )
+
+      backfill =
+        ConsumersFactory.insert_active_backfill!(
+          account_id: database.account_id,
+          sink_consumer_id: consumer.id,
+          initial_min_cursor: KeysetCursor.min_cursor(table),
+          table_oid: table.oid
+        )
+
+      start_supervised({SlotMessageStoreSupervisor, consumer_id: consumer.id, test_pid: self()})
+      pid = start_table_reader_server(backfill, table.oid, initial_page_size: 2)
+
+      {:ok, messages} = flush_batches(consumer, pid)
+
+      # Every row exactly once (text ordering, e.g. "$10.00" before "$9.00", skips and repeats rows)
+      assert messages |> Enum.map(& &1.data.record["name"]) |> Enum.sort() == ~w(a b c d e f)
+      assert Repo.reload(backfill).state == :completed
     end
 
     test "sets group_id based on PKs by default", %{

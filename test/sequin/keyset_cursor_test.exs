@@ -11,7 +11,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
       table = create_test_table()
       result = KeysetCursor.where_sql(table, ">")
 
-      assert result == ~s{("updated_at", "id1", "id2") > (?, ?, ?)}
+      assert result == ~s{("updated_at", "id1", "id2") > ((?::text)::timestamp, (?::text)::bigint, (?::text)::uuid)}
     end
 
     test "handles different column names and attnums" do
@@ -24,7 +24,8 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.where_sql(table, "<")
 
-      assert result == ~s{("modified_at", "uuid_col", "big_id") < (?, ?, ?)}
+      assert result ==
+               ~s{("modified_at", "uuid_col", "big_id") < ((?::text)::timestamp, (?::text)::uuid, (?::text)::bigint)}
     end
 
     test "handles sort column as primary key" do
@@ -37,7 +38,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.where_sql(table, ">")
 
-      assert result == ~s{("id1", "id2") > (?, ?)}
+      assert result == ~s{("id1", "id2") > ((?::text)::bigint, (?::text)::uuid)}
     end
 
     test "handles nil sort column by using only primary keys" do
@@ -50,20 +51,20 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.where_sql(table, ">")
 
-      assert result == ~s{("id1", "id2") > (?, ?)}
+      assert result == ~s{("id1", "id2") > ((?::text)::bigint, (?::text)::uuid)}
     end
 
     test "compares only the bounded prefix of a cursor, inclusively" do
       table = create_test_table()
 
       assert KeysetCursor.where_sql(table, ">", %{1 => ~N[2023-01-01 00:00:00], 2 => nil, 3 => nil}) ==
-               ~s{("updated_at") >= (?)}
+               ~s{("updated_at") >= ((?::text)::timestamp)}
 
       assert KeysetCursor.where_sql(table, ">=", %{1 => ~N[2023-01-01 00:00:00], 2 => 5, 3 => nil}) ==
-               ~s{("updated_at", "id1") >= (?, ?)}
+               ~s{("updated_at", "id1") >= ((?::text)::timestamp, (?::text)::bigint)}
 
       assert KeysetCursor.where_sql(table, ">", %{1 => ~N[2023-01-01 00:00:00], 2 => 5, 3 => "x"}) ==
-               ~s{("updated_at", "id1", "id2") > (?, ?, ?)}
+               ~s{("updated_at", "id1", "id2") > ((?::text)::timestamp, (?::text)::bigint, (?::text)::uuid)}
     end
 
     test "matches everything for a fully unbounded cursor" do
@@ -79,14 +80,14 @@ defmodule Sequin.Runtime.KeysetCursorTest do
       table = create_test_table()
       result = KeysetCursor.order_by_sql(table)
 
-      assert result == ~s("updated_at" asc, "id1" asc, "id2" asc)
+      assert result == ~s("public"."t"."updated_at" asc, "public"."t"."id1" asc, "public"."t"."id2" asc)
     end
 
     test "generates correct string with descending order" do
       table = create_test_table()
       result = KeysetCursor.order_by_sql(table, "desc")
 
-      assert result == ~s("updated_at" desc, "id1" desc, "id2" desc)
+      assert result == ~s("public"."t"."updated_at" desc, "public"."t"."id1" desc, "public"."t"."id2" desc)
     end
 
     test "handles sort column as primary key" do
@@ -98,7 +99,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.order_by_sql(table)
 
-      assert result == ~s("id1" asc, "id2" asc)
+      assert result == ~s("public"."t"."id1" asc, "public"."t"."id2" asc)
     end
 
     test "handles nil sort column by using only primary keys" do
@@ -111,7 +112,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.order_by_sql(table)
 
-      assert result == ~s("id1" asc, "id2" asc)
+      assert result == ~s("public"."t"."id1" asc, "public"."t"."id2" asc)
     end
   end
 
@@ -127,11 +128,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.casted_cursor_values(table, cursor)
 
-      assert result == [
-               ~N[2023-01-01 00:00:00],
-               123,
-               Sequin.String.string_to_binary!("550e8400-e29b-41d4-a716-446655440000")
-             ]
+      assert result == ["2023-01-01T00:00:00", "123", "550e8400-e29b-41d4-a716-446655440000"]
     end
 
     test "works with nil sort column" do
@@ -148,10 +145,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.casted_cursor_values(table, cursor)
 
-      assert result == [
-               123,
-               Sequin.String.string_to_binary!("550e8400-e29b-41d4-a716-446655440000")
-             ]
+      assert result == ["123", "550e8400-e29b-41d4-a716-446655440000"]
     end
   end
 
@@ -307,7 +301,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
         })
       end)
 
-    DatabasesFactory.table(%{columns: columns, sort_column_attnum: @sort_column_attnum})
+    DatabasesFactory.table(%{schema: "public", name: "t", columns: columns, sort_column_attnum: @sort_column_attnum})
   end
 
   defp create_test_table_with_nil_sort_column(columns) do
@@ -321,6 +315,6 @@ defmodule Sequin.Runtime.KeysetCursorTest do
         })
       end)
 
-    DatabasesFactory.table(%{columns: columns, sort_column_attnum: nil})
+    DatabasesFactory.table(%{schema: "public", name: "t", columns: columns, sort_column_attnum: nil})
   end
 end

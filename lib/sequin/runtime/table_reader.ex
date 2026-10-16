@@ -272,11 +272,9 @@ defmodule Sequin.Runtime.TableReader do
     # Get the select columns based on the option
     select_columns =
       if select_only_pk_and_cursor_columns do
-        # Get cursor columns which include the primary keys and sort columns
-        cursor_columns = KeysetCursor.cursor_columns(table)
-
-        # Create a select statement with only the needed columns
-        Enum.map_join(cursor_columns, ", ", &Postgres.quote_name(&1.name))
+        # Only the primary keys and sort column, selected as the full query selects them, so
+        # the cursor built from them is the same (and every type can be decoded)
+        Postgres.safe_select_columns(%{table | columns: KeysetCursor.cursor_columns(table)})
       else
         Postgres.safe_select_columns(table)
       end

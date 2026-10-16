@@ -38,7 +38,7 @@ defmodule Sequin.DataCase do
   setup tags do
     if tags[:unboxed] do
       Enum.each(
-        [Character, CharacterDetailed, CharacterMultiPK, "all_column_types", "pk_types"],
+        [Character, CharacterDetailed, CharacterMultiPK, "all_column_types", "pk_types", "pk_text_types"],
         &UnboxedRepo.delete_all/1
       )
     end
