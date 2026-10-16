@@ -534,9 +534,21 @@ defmodule Sequin.Runtime.SlotProducer do
       raise "[SlotProducer] restart_wal_cursor is empty"
     end
 
-    Replication.put_restart_wal_cursor!(state.id, restart_wal_cursor)
+    case Replication.put_restart_wal_cursor(state.id, restart_wal_cursor) do
+      :ok ->
+        %{state | restart_wal_cursor: restart_wal_cursor}
 
-    %{state | restart_wal_cursor: restart_wal_cursor}
+      {:error, error} ->
+        # Redis being briefly unreachable (e.g. a Dragonfly restart) must not crash the producer: doing so cancels
+        # every downstream processor and tears down the whole replication pipeline. Keep the last cursor we know
+        # was persisted — so we don't ack Postgres past it — and retry on the next tick.
+        Logger.warning(
+          "[SlotProducer] Failed to persist restart WAL cursor, will retry: #{Exception.message(error)}",
+          error: error
+        )
+
+        state
+    end
   end
 
   defp message_from_binary(%State{commit_lsn: nil}, msg) do
@@ -722,12 +734,20 @@ defmodule Sequin.Runtime.SlotProducer do
     [<<?r, lsn::64, lsn::64, lsn::64, current_time()::64, 0>>]
   end
 
+  # Best-effort: a health event is informational and must not gate the replication connection
+  # (e.g. Redis being briefly unreachable).
   defp put_connected_health(id) do
-    Health.put_event(
-      :postgres_replication_slot,
-      id,
-      %Event{slug: :replication_connected, status: :success}
-    )
+    case Health.put_event(:postgres_replication_slot, id, %Event{slug: :replication_connected, status: :success}) do
+      :ok ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("[SlotProducer] Failed to record connected health event: #{Exception.message(error)}",
+          error: error
+        )
+
+        :ok
+    end
   end
 
   defp send_ack(%State{} = state) do

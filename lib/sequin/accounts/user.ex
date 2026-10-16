@@ -29,7 +29,7 @@ defmodule Sequin.Accounts.User do
     field :hashed_password, :string, redact: true
     field :current_password, :string, virtual: true, redact: true
     field :confirmed_at, :utc_datetime
-    field :auth_provider, Ecto.Enum, values: [:identity, :github]
+    field :auth_provider, Ecto.Enum, values: [:identity, :github, :cloudflare_access]
     field :auth_provider_id, :string
     field :extra, :map
 

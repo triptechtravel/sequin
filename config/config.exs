@@ -67,6 +67,14 @@ config :sequin, Oban,
      ]}
   ]
 
+# Cloudflare Access (trusted-header) authentication. Disabled by default; the
+# self-hosted deployment behind Cloudflare Access enables it via env in
+# config/runtime.exs.
+config :sequin, Sequin.CloudflareAccess,
+  enabled: false,
+  team_domain: nil,
+  audience: nil
+
 config :sequin, Sequin.Mailer, adapter: Swoosh.Adapters.Local
 
 config :sequin, Sequin.Redis,

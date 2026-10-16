@@ -96,7 +96,16 @@ defmodule Sequin.Application do
       # Start to serve requests, typically the last entry
       SequinWeb.Endpoint,
       SequinWeb.MetricsEndpoint
-    ]
+    ] ++ cloudflare_access_children()
+  end
+
+  # Only run the Cloudflare Access JWKS cache when the feature is enabled.
+  defp cloudflare_access_children do
+    if Sequin.CloudflareAccess.enabled?() do
+      [Sequin.CloudflareAccess]
+    else
+      []
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration

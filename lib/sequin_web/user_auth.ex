@@ -38,6 +38,20 @@ defmodule SequinWeb.UserAuth do
     |> redirect(to: user_return_to || signed_in_path(conn))
   end
 
+  @doc """
+  Signs a user in by minting a session token and storing it in the session,
+  without issuing a redirect.
+
+  Used by request-driven authentication (e.g. Cloudflare Access) that needs to
+  establish the session mid-pipeline and then let the request continue so
+  `fetch_current_user/2` (and LiveView's `mount_current_user/2`, which both read
+  `:user_token` from the session) pick the user up.
+  """
+  def put_user_in_session(conn, user) do
+    token = Accounts.generate_user_session_token(user)
+    put_token_in_session(conn, token)
+  end
+
   defp maybe_write_remember_me_cookie(conn, token, %{"remember_me" => "true"}) do
     put_resp_cookie(conn, @remember_me_cookie, token, @remember_me_options)
   end
