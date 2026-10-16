@@ -771,6 +771,45 @@ defmodule Sequin.Postgres do
     "array[#{pks}]::text[] as #{quote_name(@record_pks_column)}"
   end
 
+  @doc """
+  Fetches the current rows with the given keys, as lists of each primary key column's Postgres
+  text (a message's `ids`/`record_pks`). Returns them keyed by that text, loaded like a backfill
+  so values match what replication emits for them.
+  """
+  @spec fetch_rows_by_record_pks(db_conn(), PostgresDatabaseTable.t(), [[String.t()]], Keyword.t()) ::
+          {:ok, %{[String.t()] => map()}} | {:error, any()}
+  def fetch_rows_by_record_pks(db_or_conn, table, record_pks_list, opts \\ [])
+  def fetch_rows_by_record_pks(_db_or_conn, _table, [], _opts), do: {:ok, %{}}
+
+  def fetch_rows_by_record_pks(db_or_conn, %PostgresDatabaseTable{} = table, record_pks_list, opts) do
+    record_pks_list = Enum.uniq(record_pks_list)
+
+    # Keys are passed as text and cast to the column's type in SQL, which keeps the comparison
+    # indexable and works for any key type
+    pk_match =
+      table.columns
+      |> Enum.filter(& &1.is_pk?)
+      |> Enum.sort_by(& &1.attnum)
+      |> Enum.map_join(" AND ", &"#{quote_name(&1.name)} = (?::text)::#{&1.type}")
+
+    sql =
+      parameterize_sql("""
+      SELECT #{safe_select_columns(table)}, #{record_pks_sql(table)}
+      FROM #{quote_name(table.schema, table.name)}
+      WHERE #{Enum.map_join(record_pks_list, " OR ", fn _ -> "(#{pk_match})" end)}
+      """)
+
+    with {:ok, %Postgrex.Result{} = result} <- query(db_or_conn, sql, List.flatten(record_pks_list), opts) do
+      raw_rows = result_to_maps(result)
+
+      {:ok,
+       raw_rows
+       |> Enum.map(&Map.fetch!(&1, @record_pks_column))
+       |> Enum.zip(load_rows(table, raw_rows))
+       |> Map.new()}
+    end
+  end
+
   def sequence_nextval(sequence_name) do
     # Reason for casting explicitly: https://github.com/elixir-ecto/postgrex#oid-type-encoding
     with %{rows: [[val]]} <- Repo.query!("SELECT nextval($1::text::regclass)", [sequence_name]) do
