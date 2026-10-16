@@ -91,6 +91,7 @@ defmodule Sequin.Application do
       Sequin.Sinks.Kafka.ConnectionCache,
       Sequin.Sinks.Nats.ConnectionCache,
       Sequin.Sinks.RabbitMq.ConnectionCache,
+      Sequin.Sinks.Postgres.ConnectionCache,
       SequinWeb.Presence,
       {Task, fn -> enqueue_workers() end},
       # Start to serve requests, typically the last entry

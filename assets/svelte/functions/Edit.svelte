@@ -108,6 +108,7 @@
     kafka: "Kafka",
     meilisearch: "Meilisearch",
     nats: "NATS",
+    postgres: "Postgres",
     rabbitmq: "RabbitMQ",
     s2: "S2",
     azure_event_hub: "Azure Event Hub",

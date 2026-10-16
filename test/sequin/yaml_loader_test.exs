@@ -12,6 +12,7 @@ defmodule Sequin.YamlLoaderTest do
   alias Sequin.Consumers.HttpEndpoint
   alias Sequin.Consumers.KafkaSink
   alias Sequin.Consumers.KinesisSink
+  alias Sequin.Consumers.PostgresSink
   alias Sequin.Consumers.RedisStreamSink
   alias Sequin.Consumers.RedisStringSink
   alias Sequin.Consumers.S2Sink
@@ -1491,6 +1492,62 @@ defmodule Sequin.YamlLoaderTest do
                auth_value: "sensitive-api-key",
                batch_size: 100
              } = consumer.sink
+    end
+
+    test "creates postgres sink consumer" do
+      assert :ok =
+               YamlLoader.apply_from_yml!("""
+               #{account_and_db_yml()}
+
+               sinks:
+                 - name: "postgres-mirror"
+                   database: "test-db"
+                   destination:
+                     type: "postgres"
+                     host: "replica.example.com"
+                     database: "analytics"
+                     username: "sequin"
+                     password: "sensitive-password"
+                     ssl: true
+                     table_name: "mirror.users"
+               """)
+
+      assert [consumer] = Repo.all(SinkConsumer)
+
+      assert %PostgresSink{
+               host: "replica.example.com",
+               port: 5432,
+               database: "analytics",
+               username: "sequin",
+               password: "sensitive-password",
+               ssl: true,
+               table_name: "mirror.users",
+               batch_size: 100,
+               routing_mode: :static
+             } = consumer.sink
+
+      # Exported without its password unless asked for
+      exported = Sequin.Transforms.to_external(consumer.sink, false)
+      assert %{type: "postgres", table_name: "mirror.users"} = exported
+      refute Jason.encode!(exported) =~ "sensitive-password"
+      assert Jason.encode!(Sequin.Transforms.to_external(consumer.sink, true)) =~ "sensitive-password"
+    end
+
+    test "a postgres sink without a routing function needs a table" do
+      assert_raise RuntimeError, ~r/table_name: \["can't be blank"\]/, fn ->
+        YamlLoader.apply_from_yml!("""
+        #{account_and_db_yml()}
+
+        sinks:
+          - name: "postgres-mirror"
+            database: "test-db"
+            destination:
+              type: "postgres"
+              host: "replica.example.com"
+              database: "analytics"
+              username: "sequin"
+        """)
+      end
     end
 
     test "creates redis string sink consumer" do

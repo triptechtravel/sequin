@@ -116,6 +116,15 @@ For [Meilisearch](/reference/sinks/meilisearch), your routing function must retu
 | `action` | String | The action to perform on the collection | `"index"`, `"delete"` |
 | `index_name` | String | The index to publish to | `"users"` |
 
+### Postgres sink
+
+For [Postgres](/reference/sinks/postgres), your routing function may return a map with these keys. Keys it leaves out keep their defaults:
+
+| Key | Type | Description | Example |
+|-----|------|-------------|---------|
+| `action` | String | `"upsert"` (the default for inserts, updates and reads) or `"delete"` (the default for deletes) | `"upsert"` |
+| `table_name` | String | The destination table, optionally schema-qualified. Defaults to the source table's schema and name | `"mirror.users"` |
+
 ### AWS SQS sink
 
 For [AWS SQS](/reference/sinks/sqs), your routing function must return a map with these keys:

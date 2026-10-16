@@ -18,6 +18,7 @@ defmodule Sequin.Transforms do
   alias Sequin.Consumers.MeilisearchSink
   alias Sequin.Consumers.NatsSink
   alias Sequin.Consumers.PathFunction
+  alias Sequin.Consumers.PostgresSink
   alias Sequin.Consumers.RabbitMqSink
   alias Sequin.Consumers.RedisStreamSink
   alias Sequin.Consumers.RedisStringSink
@@ -403,6 +404,20 @@ defmodule Sequin.Transforms do
       api_key: SensitiveValue.new(sink.api_key, show_sensitive),
       batch_size: sink.batch_size,
       timeout_seconds: sink.timeout_seconds
+    })
+  end
+
+  def to_external(%PostgresSink{} = sink, show_sensitive) do
+    reject_nil_values(%{
+      type: "postgres",
+      host: sink.host,
+      port: sink.port,
+      database: sink.database,
+      username: sink.username,
+      password: SensitiveValue.new(sink.password, show_sensitive),
+      ssl: sink.ssl,
+      table_name: sink.table_name,
+      batch_size: sink.batch_size
     })
   end
 
@@ -1292,6 +1307,21 @@ defmodule Sequin.Transforms do
        api_key: attrs["api_key"],
        batch_size: attrs["batch_size"],
        timeout_seconds: attrs["timeout_seconds"]
+     }}
+  end
+
+  defp parse_sink(%{"type" => "postgres"} = attrs, _resources) do
+    {:ok,
+     %{
+       type: :postgres,
+       host: attrs["host"],
+       port: attrs["port"] || 5432,
+       database: attrs["database"],
+       username: attrs["username"],
+       password: attrs["password"],
+       ssl: attrs["ssl"] || false,
+       table_name: attrs["table_name"],
+       batch_size: attrs["batch_size"] || 100
      }}
   end
 

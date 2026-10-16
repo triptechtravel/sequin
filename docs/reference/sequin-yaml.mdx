@@ -330,6 +330,21 @@ destination:
   timeout_seconds: 5               # Optional, seconds to wait for response, default: 5, max: 300
 ```
 
+#### Postgres sink
+For mirroring rows into tables in another Postgres database:
+```yaml
+destination:
+  type: "postgres"                 # Required
+  host: "replica.example.com"      # Required
+  port: 5432                       # Optional, default: 5432
+  database: "analytics"            # Required
+  username: "sequin"               # Required
+  password: "your-password"        # Optional
+  ssl: true                        # Optional, default: false
+  table_name: "mirror.users"       # Required, unless a routing function picks the table
+  batch_size: 100                  # Optional, rows per statement, default: 100, max: 10000
+```
+
 #### Elasticsearch sink
 For indexing documents into an Elasticsearch index:
 ```yaml

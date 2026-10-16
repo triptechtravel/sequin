@@ -26,6 +26,7 @@
     TypesenseConsumer,
     ElasticsearchConsumer,
     RedisStringConsumer,
+    PostgresSinkConsumer,
     AzureEventHubConsumer,
   } from "./types";
   import AzureEventHubSinkCard from "../sinks/azure_event_hub/AzureEventHubSinkCard.svelte";
@@ -37,6 +38,7 @@
   import RabbitMqSinkCard from "../sinks/rabbitmq/RabbitMqSinkCard.svelte";
   import RedisStreamSinkCard from "../sinks/redis-stream/RedisStreamSinkCard.svelte";
   import RedisStringSinkCard from "../sinks/redis-string/RedisStringSinkCard.svelte";
+  import PostgresSinkCard from "../sinks/postgres/PostgresSinkCard.svelte";
   import S2SinkCard from "../sinks/s2/S2SinkCard.svelte";
   import SequinStreamSinkCard from "../sinks/sequin_stream/SequinStreamSinkCard.svelte";
   import SinkCardHttpPush from "../components/SinkCardHttpPush.svelte";
@@ -137,6 +139,12 @@
     consumer: Consumer,
   ): consumer is RedisStringConsumer {
     return consumer.sink.type === "redis_string";
+  }
+
+  function isPostgresSinkConsumer(
+    consumer: Consumer,
+  ): consumer is PostgresSinkConsumer {
+    return consumer.sink.type === "postgres";
   }
 
   function isNatsConsumer(consumer: Consumer): consumer is NatsConsumer {
@@ -1254,6 +1262,8 @@
         <ElasticsearchSinkCard {consumer} />
       {:else if isRedisStringConsumer(consumer)}
         <RedisStringSinkCard {consumer} />
+      {:else if isPostgresSinkConsumer(consumer)}
+        <PostgresSinkCard {consumer} />
       {/if}
 
       <ShowSource {consumer} {tables} />
