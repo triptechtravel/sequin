@@ -186,55 +186,55 @@
           </Alert.Root>
         {:else}
           <form on:submit={handleChangePassword} class="mt-4 space-y-4">
-          <div class="grid w-full items-center gap-1.5">
-            <Label for="current-password">Current password</Label>
-            <Input
-              type="password"
-              id="current-password"
-              bind:value={currentPassword}
-              disabled={!passwordChangeEnabled}
-            />
-            {#if changePasswordErrors.current_password}
-              <p class="text-sm text-destructive">
-                {changePasswordErrors.current_password[0]}
-              </p>
-            {/if}
-          </div>
-          <div class="grid w-full items-center gap-1.5">
-            <Label for="new-password">New password</Label>
-            <Input
-              type="password"
-              id="new-password"
-              bind:value={newPassword}
-              disabled={!passwordChangeEnabled}
-            />
-            {#if changePasswordErrors.password}
-              <p class="text-sm text-destructive">
-                {changePasswordErrors.password[0]}
-              </p>
-            {/if}
-          </div>
-          <div class="grid w-full items-center gap-1.5">
-            <Label for="confirm-password">Confirm new password</Label>
-            <Input
-              type="password"
-              id="confirm-password"
-              bind:value={newPasswordConfirmation}
-              disabled={!passwordChangeEnabled}
-            />
-            {#if changePasswordErrors.password_confirmation}
-              <p class="text-sm text-destructive">
-                {changePasswordErrors.password_confirmation[0]}
-              </p>
-            {/if}
-          </div>
-          <Button
-            type="submit"
-            disabled={changePasswordLoading || !passwordChangeEnabled}
-            loading={changePasswordLoading}
-          >
-            Change password
-          </Button>
+            <div class="grid w-full items-center gap-1.5">
+              <Label for="current-password">Current password</Label>
+              <Input
+                type="password"
+                id="current-password"
+                bind:value={currentPassword}
+                disabled={!passwordChangeEnabled}
+              />
+              {#if changePasswordErrors.current_password}
+                <p class="text-sm text-destructive">
+                  {changePasswordErrors.current_password[0]}
+                </p>
+              {/if}
+            </div>
+            <div class="grid w-full items-center gap-1.5">
+              <Label for="new-password">New password</Label>
+              <Input
+                type="password"
+                id="new-password"
+                bind:value={newPassword}
+                disabled={!passwordChangeEnabled}
+              />
+              {#if changePasswordErrors.password}
+                <p class="text-sm text-destructive">
+                  {changePasswordErrors.password[0]}
+                </p>
+              {/if}
+            </div>
+            <div class="grid w-full items-center gap-1.5">
+              <Label for="confirm-password">Confirm new password</Label>
+              <Input
+                type="password"
+                id="confirm-password"
+                bind:value={newPasswordConfirmation}
+                disabled={!passwordChangeEnabled}
+              />
+              {#if changePasswordErrors.password_confirmation}
+                <p class="text-sm text-destructive">
+                  {changePasswordErrors.password_confirmation[0]}
+                </p>
+              {/if}
+            </div>
+            <Button
+              type="submit"
+              disabled={changePasswordLoading || !passwordChangeEnabled}
+              loading={changePasswordLoading}
+            >
+              Change password
+            </Button>
           </form>
         {/if}
       </Card.Content>
