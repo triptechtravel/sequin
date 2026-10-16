@@ -6,7 +6,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
   @sort_column_attnum 1
 
-  describe "where_sql/2" do
+  describe "where_sql/3" do
     test "generates correct string with sort column and two PKs" do
       table = create_test_table()
       result = KeysetCursor.where_sql(table, ">")
@@ -51,6 +51,26 @@ defmodule Sequin.Runtime.KeysetCursorTest do
       result = KeysetCursor.where_sql(table, ">")
 
       assert result == ~s{("id1", "id2") > (?, ?)}
+    end
+
+    test "compares only the bounded prefix of a cursor, inclusively" do
+      table = create_test_table()
+
+      assert KeysetCursor.where_sql(table, ">", %{1 => ~N[2023-01-01 00:00:00], 2 => nil, 3 => nil}) ==
+               ~s{("updated_at") >= (?)}
+
+      assert KeysetCursor.where_sql(table, ">=", %{1 => ~N[2023-01-01 00:00:00], 2 => 5, 3 => nil}) ==
+               ~s{("updated_at", "id1") >= (?, ?)}
+
+      assert KeysetCursor.where_sql(table, ">", %{1 => ~N[2023-01-01 00:00:00], 2 => 5, 3 => "x"}) ==
+               ~s{("updated_at", "id1", "id2") > (?, ?, ?)}
+    end
+
+    test "matches everything for a fully unbounded cursor" do
+      table = create_test_table()
+
+      assert KeysetCursor.where_sql(table, ">=", KeysetCursor.min_cursor(table)) == "true"
+      assert KeysetCursor.casted_cursor_values(table, KeysetCursor.min_cursor(table)) == []
     end
   end
 
@@ -156,15 +176,11 @@ defmodule Sequin.Runtime.KeysetCursorTest do
   end
 
   describe "min_cursor/1" do
-    test "returns cursor with minimum values for all columns" do
+    test "returns a fully unbounded cursor" do
       table = create_test_table()
       result = KeysetCursor.min_cursor(table)
 
-      assert result == %{
-               1 => ~N[0001-01-01 00:00:00],
-               2 => 0,
-               3 => "00000000-0000-0000-0000-000000000000"
-             }
+      assert result == %{1 => nil, 2 => nil, 3 => nil}
     end
 
     test "handles different column types" do
@@ -177,11 +193,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.min_cursor(table)
 
-      assert result == %{
-               1 => ~U[0001-01-01 00:00:00Z],
-               2 => 0,
-               3 => ""
-             }
+      assert result == %{1 => nil, 2 => nil, 3 => nil}
     end
 
     test "handles nil sort column" do
@@ -193,24 +205,17 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.min_cursor(table)
 
-      assert result == %{
-               2 => 0,
-               3 => "00000000-0000-0000-0000-000000000000"
-             }
+      assert result == %{2 => nil, 3 => nil}
     end
   end
 
   describe "min_cursor/2" do
-    test "returns cursor with specified minimum sort column value" do
+    test "returns cursor with specified minimum sort column value and unbounded keys" do
       table = create_test_table()
       min_sort_value = ~N[2023-01-01 00:00:00]
       result = KeysetCursor.min_cursor(table, min_sort_value)
 
-      assert result == %{
-               1 => ~N[2023-01-01 00:00:00],
-               2 => 0,
-               3 => "00000000-0000-0000-0000-000000000000"
-             }
+      assert result == %{1 => ~N[2023-01-01 00:00:00], 2 => nil, 3 => nil}
     end
 
     test "ignores sort column value when sort column is nil" do
@@ -222,10 +227,7 @@ defmodule Sequin.Runtime.KeysetCursorTest do
 
       result = KeysetCursor.min_cursor(table, nil)
 
-      assert result == %{
-               2 => 0,
-               3 => "00000000-0000-0000-0000-000000000000"
-             }
+      assert result == %{2 => nil, 3 => nil}
     end
   end
 

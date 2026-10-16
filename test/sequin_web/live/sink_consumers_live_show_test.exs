@@ -70,7 +70,7 @@ defmodule SequinWeb.SinkConsumersLive.ShowTest do
       assert backfill.account_id == consumer.account_id
 
       assert backfill.initial_min_cursor == %{
-               1 => "00000000-0000-0000-0000-000000000000"
+               1 => nil
              }
     end
 
@@ -98,7 +98,7 @@ defmodule SequinWeb.SinkConsumersLive.ShowTest do
       assert backfill.sink_consumer_id == consumer.id
 
       assert backfill.initial_min_cursor == %{
-               1 => "00000000-0000-0000-0000-000000000000",
+               1 => nil,
                3 => "2021-01-01 00:00:00Z"
              }
     end

@@ -58,6 +58,7 @@ UnboxedRepo.delete_all(Sequin.TestSupport.Models.Character)
 UnboxedRepo.delete_all(Sequin.TestSupport.Models.CharacterDetailed)
 UnboxedRepo.delete_all(Sequin.TestSupport.Models.CharacterMultiPK)
 UnboxedRepo.delete_all("all_column_types")
+UnboxedRepo.delete_all("pk_types")
 UnboxedRepo.delete_all(Sequin.TestSupport.Models.TestEventLogPartitioned)
 
 # Clean out health redis keys

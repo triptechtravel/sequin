@@ -4,7 +4,7 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
 
   alias Sequin.Constants
 
-  def my_version, do: 2
+  def my_version, do: 3
 
   def check_version!(repo) do
     if my_version() != get_version(repo) do
@@ -285,7 +285,22 @@ defmodule Sequin.Test.UnboxedRepo.Migrations.CreateTestTables do
             """,
             "DROP TABLE all_column_types"
 
-    execute "create publication characters_publication for table \"Characters\", characters_ident_full, characters_multi_pk, characters_detailed, all_column_types, test_event_logs_partitioned, #{Constants.logical_messages_table_name()}",
+    # A primary key of types whose Postgres text differs from Elixir's to_string/1 of the decoded
+    # value, for asserting backfill and replication agree on message identity
+    execute """
+            CREATE TABLE pk_types (
+              pk_timestamp timestamp,
+              pk_timestamptz timestamptz,
+              pk_bool boolean,
+              pk_numeric numeric,
+              name text,
+              updated_at timestamp NOT NULL DEFAULT now(),
+              PRIMARY KEY (pk_timestamp, pk_timestamptz, pk_bool, pk_numeric)
+            )
+            """,
+            "DROP TABLE pk_types"
+
+    execute "create publication characters_publication for table \"Characters\", characters_ident_full, characters_multi_pk, characters_detailed, all_column_types, pk_types, test_event_logs_partitioned, #{Constants.logical_messages_table_name()}",
             "drop publication characters_publication"
 
     create table(:sequin_events) do
