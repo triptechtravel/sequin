@@ -9,13 +9,14 @@ defmodule Sequin.Sinks.Typesense.Client do
 
   require Logger
 
-  defstruct [:api_key, :url, :timeout_seconds, :req_opts]
+  defstruct [:api_key, :url, :timeout_seconds, :req_opts, gzip: false]
 
   def new(opts) do
     %__MODULE__{
       url: opts |> Keyword.fetch!(:url) |> String.trim_trailing("/"),
       api_key: Keyword.fetch!(opts, :api_key),
       timeout_seconds: Keyword.fetch!(opts, :timeout_seconds),
+      gzip: Keyword.get(opts, :gzip, false),
       req_opts: Keyword.get(opts, :req_opts, [])
     }
   end
@@ -324,6 +325,7 @@ defmodule Sequin.Sinks.Typesense.Client do
         {"X-TYPESENSE-API-KEY", client.api_key}
       ],
       receive_timeout: to_timeout(second: client.timeout_seconds),
+      compress_body: client.gzip,
       retry: :transient,
       retry_delay: fn retry_count ->
         Sequin.Time.exponential_backoff(500, retry_count, 5_000)

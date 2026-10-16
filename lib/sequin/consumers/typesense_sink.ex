@@ -16,6 +16,9 @@ defmodule Sequin.Consumers.TypesenseSink do
     field :api_key, Sequin.Encrypted.Binary
     field :batch_size, :integer, default: 40
     field :timeout_seconds, :integer, default: 10
+    # Gzip request bodies. Typesense itself doesn't accept gzip, so this is for an endpoint
+    # in front of it that inflates them.
+    field :gzip, :boolean, default: false
     field :routing_mode, Ecto.Enum, values: [:dynamic, :static]
   end
 
@@ -27,6 +30,7 @@ defmodule Sequin.Consumers.TypesenseSink do
       :api_key,
       :batch_size,
       :timeout_seconds,
+      :gzip,
       :routing_mode
     ])
     |> validate_required([:endpoint_url, :api_key])
@@ -79,6 +83,6 @@ defmodule Sequin.Consumers.TypesenseSink do
   end
 
   def client_params(%__MODULE__{} = sink) do
-    [url: sink.endpoint_url, api_key: sink.api_key, timeout_seconds: sink.timeout_seconds]
+    [url: sink.endpoint_url, api_key: sink.api_key, timeout_seconds: sink.timeout_seconds, gzip: sink.gzip]
   end
 end

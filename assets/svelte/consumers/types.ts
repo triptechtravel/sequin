@@ -208,6 +208,7 @@ export type TypesenseConsumer = BaseConsumer & {
     collection_name: string;
     batch_size: number;
     timeout_seconds: number;
+    gzip: boolean;
   };
 };
 

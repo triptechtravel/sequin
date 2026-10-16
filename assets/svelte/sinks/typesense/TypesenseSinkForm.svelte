@@ -8,6 +8,7 @@
   } from "$lib/components/ui/card";
   import type { TypesenseConsumer } from "$lib/consumers/types";
   import { Label } from "$lib/components/ui/label";
+  import { Switch } from "$lib/components/ui/switch";
   import { Eye, EyeOff, Info } from "lucide-svelte";
   import DynamicRoutingForm from "$lib/consumers/DynamicRoutingForm.svelte";
   import * as Tooltip from "$lib/components/ui/tooltip";
@@ -120,6 +121,27 @@
                 <p class="text-destructive text-sm">
                   {errors.sink.timeout_seconds}
                 </p>
+              {/if}
+            </div>
+
+            <div class="space-y-2">
+              <div class="flex items-center gap-2">
+                <Switch
+                  id="gzip"
+                  checked={form.sink.gzip}
+                  onCheckedChange={(checked) => {
+                    form.sink.gzip = checked;
+                  }}
+                />
+                <Label for="gzip">Gzip requests</Label>
+              </div>
+              <p class="text-sm text-muted-foreground">
+                Compress request bodies. Typesense doesn't accept gzipped
+                requests, so only turn this on when the endpoint is a proxy that
+                decompresses them.
+              </p>
+              {#if errors.sink?.gzip}
+                <p class="text-destructive text-sm">{errors.sink.gzip}</p>
               {/if}
             </div>
           </div>

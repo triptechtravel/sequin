@@ -403,7 +403,8 @@ defmodule Sequin.Transforms do
       collection_name: sink.collection_name,
       api_key: SensitiveValue.new(sink.api_key, show_sensitive),
       batch_size: sink.batch_size,
-      timeout_seconds: sink.timeout_seconds
+      timeout_seconds: sink.timeout_seconds,
+      gzip: sink.gzip
     })
   end
 
@@ -1306,7 +1307,8 @@ defmodule Sequin.Transforms do
        collection_name: attrs["collection_name"],
        api_key: attrs["api_key"],
        batch_size: attrs["batch_size"],
-       timeout_seconds: attrs["timeout_seconds"]
+       timeout_seconds: attrs["timeout_seconds"],
+       gzip: attrs["gzip"] || false
      }}
   end
 
