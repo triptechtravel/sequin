@@ -268,6 +268,40 @@ defmodule Sequin.Runtime.WalPipelineServerTest do
              "Expected TOAST value to be loaded found #{inspect(log.record["description"])}"
     end
 
+    test "loads unchanged toast values for rows keyed on any type", %{wal_pipeline: wal_pipeline} do
+      Repo.query!("""
+      insert into pk_types (pk_timestamp, pk_timestamptz, pk_bool, pk_numeric, name)
+      values ('2024-02-29 13:45:30.5', '2024-02-29 13:45:30+00', true, 0.00000001, 'Frodo')
+      """)
+
+      %{rows: [[table_oid]]} = Repo.query!("select 'pk_types'::regclass::oid")
+
+      # Replication identifies the row by its key columns' Postgres text
+      ReplicationFactory.insert_wal_event!(
+        wal_pipeline_id: wal_pipeline.id,
+        record: %{"pk_bool" => true, "name" => :unchanged_toast},
+        source_table_schema: "public",
+        source_table_name: "pk_types",
+        source_table_oid: table_oid,
+        record_pks: ["2024-02-29 13:45:30.5", "2024-02-29 13:45:30+00", "t", "0.00000001"]
+      )
+
+      start_supervised!(
+        {WalPipelineServer,
+         [
+           replication_slot_id: wal_pipeline.replication_slot_id,
+           destination_oid: wal_pipeline.destination_oid,
+           destination_database_id: wal_pipeline.destination_database_id,
+           wal_pipeline_ids: [wal_pipeline.id],
+           test_pid: self()
+         ]}
+      )
+
+      assert_receive {WalPipelineServer, :wrote_events, 1}, 1000
+
+      assert [%{record: %{"name" => "Frodo"}}] = Repo.all(TestEventLog)
+    end
+
     test "handles multiple TOAST values in a single batch", %{
       wal_pipeline: wal_pipeline
     } do

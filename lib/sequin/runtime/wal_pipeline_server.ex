@@ -536,11 +536,22 @@ defmodule Sequin.Runtime.WalPipelineServer do
   defp fetch_toast_values_for_table({{pipeline_id, table_oid}, events}, state) do
     source_database = get_source_database(state.wal_pipelines, pipeline_id)
     table = get_table(source_database, table_oid)
-    pk_names = get_primary_key_names(table)
 
-    events
-    |> fetch_toast_values(table, source_database)
-    |> build_toast_values_map(table.oid, pk_names)
+    case Postgres.query(source_database, toast_query(table, events), toast_query_params(events)) do
+      {:ok, %Postgrex.Result{} = result} ->
+        raw_rows = Postgres.result_to_maps(result)
+
+        # Loaded like a backfill, so values match what replication emits for them, keyed by the
+        # same Postgres text as event.record_pks
+        raw_rows
+        |> Enum.map(&Map.fetch!(&1, Postgres.record_pks_column()))
+        |> Enum.zip(Postgres.load_rows(table, raw_rows))
+        |> Map.new(fn {pks, values} -> {{table.oid, pks}, values} end)
+
+      {:error, error} ->
+        Logger.error("[WalPipelineServer] Failed to fetch TOAST values: #{inspect(error)}")
+        raise error
+    end
   end
 
   defp get_source_database(pipelines, pipeline_id) do
@@ -555,22 +566,23 @@ defmodule Sequin.Runtime.WalPipelineServer do
     |> Enum.find(&(&1.oid == table_oid))
   end
 
-  defp get_primary_key_names(table) do
-    table.columns
-    |> Enum.filter(& &1.is_pk?)
-    |> Enum.map(& &1.name)
+  defp toast_query(%PostgresDatabaseTable{} = table, events) do
+    # Keys are passed as text and cast to the column's type in SQL, which keeps the comparison
+    # indexable and works for any key type
+    pk_match =
+      table.columns
+      |> Enum.filter(& &1.is_pk?)
+      |> Enum.sort_by(& &1.attnum)
+      |> Enum.map_join(" AND ", &"#{Postgres.quote_name(&1.name)} = (?::text)::#{&1.type}")
+
+    Postgres.parameterize_sql("""
+    SELECT #{Postgres.safe_select_columns(table)}, #{Postgres.record_pks_sql(table)}
+    FROM #{Postgres.quote_name(table.schema, table.name)}
+    WHERE #{Enum.map_join(events, " OR ", fn _event -> "(#{pk_match})" end)}
+    """)
   end
 
-  defp build_toast_values_map(toast_values, table_oid, pk_names) do
-    Map.new(toast_values, fn toast_value ->
-      pk_values =
-        pk_names
-        |> Enum.map(&Map.get(toast_value, &1))
-        |> Enum.map(&to_string/1)
-
-      {{table_oid, pk_values}, toast_value}
-    end)
-  end
+  defp toast_query_params(events), do: Enum.flat_map(events, & &1.record_pks)
 
   defp replace_toast_values(wal_events, loaded_toasts) do
     Enum.map(wal_events, fn event ->
@@ -584,85 +596,6 @@ defmodule Sequin.Runtime.WalPipelineServer do
 
   defp has_unchanged_toast?(%WalEvent{record: record}) when is_map(record) do
     Enum.any?(record, fn {_key, value} -> value == "unchanged_toast" end)
-  end
-
-  defp fetch_toast_values(events, %PostgresDatabaseTable{} = table, %PostgresDatabase{} = source_database) do
-    table_name = Postgres.quote_name(table.schema, table.name)
-    pk_columns = get_sorted_pk_columns(table)
-
-    query = build_toast_query(table_name, events, table)
-    casted_pks = cast_primary_keys(events, pk_columns)
-
-    case execute_toast_query(source_database, query, casted_pks) do
-      {:ok, result} ->
-        process_toast_results(result, table.columns)
-
-      {:error, error} ->
-        Logger.error("[WalPipelineServer] Failed to fetch TOAST values: #{inspect(error)}")
-        raise error
-    end
-  end
-
-  defp get_sorted_pk_columns(table) do
-    table.columns
-    |> Enum.filter(& &1.is_pk?)
-    |> Enum.sort_by(& &1.attnum)
-  end
-
-  defp build_toast_query(table_name, events, table) do
-    pk_conditions = build_pk_conditions(events, table)
-
-    """
-    SELECT *
-    FROM #{table_name}
-    WHERE #{pk_conditions}
-    """
-  end
-
-  defp cast_primary_keys(events, pk_columns) do
-    Enum.flat_map(events, fn %WalEvent{record_pks: pks} ->
-      pks
-      |> Enum.zip(pk_columns)
-      |> Enum.map(fn {pk, col} -> Postgres.cast_value(pk, col.type) end)
-    end)
-  end
-
-  defp execute_toast_query(source_database, query, casted_pks) do
-    Postgres.query(source_database, query, casted_pks)
-  end
-
-  defp process_toast_results(%Postgrex.Result{} = result, columns) do
-    column_types = build_column_type_map(columns)
-
-    result
-    |> Postgres.result_to_maps()
-    |> Enum.map(&process_row(&1, column_types))
-  end
-
-  defp build_column_type_map(columns) do
-    Map.new(columns, fn col -> {col.name, col.type} end)
-  end
-
-  defp process_row(row, column_types) do
-    Map.new(row, fn {col_name, value} ->
-      {col_name, cast_column_value(value, Map.fetch!(column_types, col_name))}
-    end)
-  end
-
-  defp cast_column_value(nil, _), do: nil
-  defp cast_column_value(value, "uuid"), do: Sequin.String.binary_to_string!(value)
-  defp cast_column_value(value, _), do: value
-
-  defp build_pk_conditions(events, %PostgresDatabaseTable{} = table) do
-    pk_columns = Enum.filter(table.columns, & &1.is_pk?)
-
-    events
-    |> Enum.map_join(" OR ", fn _event ->
-      pk_columns
-      |> Enum.map_join(" AND ", &"#{&1.name} = ?")
-      |> then(&"(#{&1})")
-    end)
-    |> Postgres.parameterize_sql()
   end
 
   defp update_toast_values(event, toast_values) do

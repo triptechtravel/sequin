@@ -1459,7 +1459,11 @@ defmodule Sequin.PostgresReplicationTest do
           source_tables: [
             ConsumersFactory.source_table_attrs(
               table_oid: table.oid,
-              group_column_attnums: table.columns |> Enum.filter(& &1.is_pk?) |> Enum.map(& &1.attnum)
+              group_column_attnums:
+                if(ctx[:group_columns],
+                  do: Enum.map(ctx.group_columns, &attnums[&1]),
+                  else: table.columns |> Enum.filter(& &1.is_pk?) |> Enum.map(& &1.attnum)
+                )
             )
           ]
         )
@@ -1561,6 +1565,59 @@ defmodule Sequin.PostgresReplicationTest do
       """
 
       for record <- Map.values(streamed) ++ Map.values(backfilled), do: Jason.encode!(record)
+    end
+
+    @tag group_columns:
+           ~w(c_timestamp c_timestamptz c_date c_time c_numeric c_text c_jsonb c_int4_arr c_bool c_uuid c_float8)
+    test "a message's group is the same live, backfilled, and reloaded from persistence", ctx do
+      UnboxedRepo.query!(~S"""
+      insert into all_column_types
+        (c_timestamp, c_timestamptz, c_date, c_time, c_numeric, c_text, c_jsonb, c_int4_arr, c_bool, c_uuid, c_float8)
+      values
+        ('2024-02-29 13:45:30.5', '2024-02-29 13:45:30+00', '2024-02-29', '13:45:30', 0.00000001, null,
+         '{"b": 1, "a": [1, 2]}', '{65,66}', true, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 1.5)
+      """)
+
+      [streamed] = receive_messages(ctx.consumer, 1)
+
+      {:ok, %{messages: [backfilled]}} =
+        TableReader.fetch_batch(
+          ctx.source_db,
+          ctx.consumer,
+          ctx.backfill,
+          ctx.table,
+          ctx.backfill.initial_min_cursor,
+          include_min: true
+        )
+
+      # Messages are persisted when a consumer's store overflows, and reloaded on restart
+      {:ok, 1} = Consumers.upsert_consumer_messages(ctx.consumer, [streamed])
+
+      [reloaded] =
+        ctx.consumer
+        |> Consumers.stream_consumer_messages_for_consumer()
+        |> Enum.map(&Consumers.put_dynamic_fields(&1, ctx.consumer, ctx.source_db))
+
+      assert streamed.group_id ==
+               Enum.join(
+                 [
+                   "2024-02-29 13:45:30.500000",
+                   "2024-02-29 13:45:30.000000Z",
+                   "2024-02-29",
+                   "13:45:30.000000",
+                   "1E-8",
+                   "",
+                   ~s({"a":[1,2],"b":1}),
+                   "[65,66]",
+                   "true",
+                   "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+                   "1.5"
+                 ],
+                 ":"
+               )
+
+      assert backfilled.group_id == streamed.group_id
+      assert reloaded.group_id == streamed.group_id
     end
 
     @tag table: "pk_types"
