@@ -13,6 +13,69 @@ This log is updated every Friday to track our feature releases and updates week 
 > [!NOTE]
 For notes on Docker and CLI version releases, see the [GitHub Releases](https://github.com/sequinstream/sequin/releases) page.
 
+> [!NOTE]
+Entries from v0.14.6 onward are for the [TripTech-maintained fork](https://github.com/triptechtravel/sequin), released as `v0.14.6-ttN` Docker images on `ghcr.io/triptechtravel/sequin`.
+
+## October 17, 2026
+[v0.14.6-tt6...v0.14.6-tt10](https://github.com/triptechtravel/sequin/compare/v0.14.6-tt6...v0.14.6-tt10)
+
+### Backfills match replication, for every column type
+
+A backfilled row now produces exactly the same message as the same row streamed through replication. Previously, backfills silently emitted `null` for many column types: composite types ([#1](https://github.com/triptechtravel/sequin/issues/1), reported by @roberto-palloni), `inet`, `cidr`, `macaddr`, geometric types, `money`, `xml`, `pg_lsn`, `hstore`, `tsvector`, extension types, and arrays of composites, enums and domains. Values Sequin can't decode natively are now read as Postgres's own text for the type, which is exactly what replication sends. A new integration test checks this for about 90 types and edge values.
+
+If you backfilled tables with these column types before this release, run a new backfill to repair the `null` values downstream.
+
+### Backfills and live changes for a row stay in order
+
+Backfill and replication now identify a row in the same way. Before, they formatted `timestamp`, `timestamptz`, `boolean` and small `numeric` primary keys differently. A row updated during its backfill could then have its stale backfilled version delivered *after* the update, leaving your destination with the old value.
+
+### Unchanged large values are no longer overwritten
+
+Under the default replica identity, Postgres replicates an update without the values of large (TOASTed) columns that it didn't change. Sinks used to receive the literal string `"unchanged_toast"` for those columns, which upserting destinations wrote over the real data. Sequin now reads those values from the row instead.
+
+<details>
+
+<summary>Fixes and improvements</summary>
+
+### Fixed
+
+* Backfills no longer skip rows with negative primary keys.
+* Backfills now work on tables keyed or sorted on `boolean`, `inet`, `money`, composite or `±infinity` date columns. Some of these failed outright, and others skipped or repeated rows.
+* A `-infinity` date no longer makes a backfill fail on every retry.
+* Messages keep their group after a restart or disk overflow. This preserves per-group ordering and backfill/replication conflict detection for custom group columns.
+* A `jsonb` group column no longer crashes replication. Array group columns no longer render as garbled text.
+* Replication no longer turns a `"NULL"` string inside an array into `null`.
+* `time` values keep their microseconds, and `timetz` values are normalized to UTC instead of dropping their offset. Whole-second `time` values now serialize with `.000000`, as timestamps already do.
+* `NaN` and `Infinity` values in `float` and `numeric` columns, and infinite timestamps, are sent as the same strings in backfills and replication.
+* WAL pipelines: a datetime column filter no longer crashes replication on a `null` value, or on any delete under the default replica identity.
+* WAL pipelines: number filters on `numeric` columns compare values correctly. Before, `> 100` always matched and `< 100` never did. `null` values no longer pass `>` filters.
+* WAL pipelines: loading unchanged TOAST values now works for any primary key type and quotes key names correctly. It no longer crash-loops on columns Sequin can't decode natively.
+* Values Sequin can't represent now log a warning instead of being dropped silently.
+
+</details>
+
+## September 18, 2026
+[v0.14.6...v0.14.6-tt6](https://github.com/triptechtravel/sequin/compare/v0.14.6...v0.14.6-tt6)
+
+### Cloudflare Access authentication
+
+Sequin can authenticate console users with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/), trusting the identity in the request headers Access sets. An Access login adopts an existing user with the same email address. Settings show which provider manages a user, and fields the identity provider manages are locked.
+
+### Surviving Redis outages
+
+A brief Redis outage, such as a Redis or Dragonfly restart, no longer tears down replication. Sequin retries persisting its replication cursor and holding its mutexes, with exponential backoff, until Redis returns.
+
+<details>
+
+<summary>Fixes and improvements</summary>
+
+### Fixed
+
+* Builds without a Sentry DSN, including ones with an empty `SENTRY_DSN`, no longer fail at boot.
+* The sink consumer page no longer crash-loops while Redis is unreachable. Its metrics fall back to zeros.
+
+</details>
+
 ## July 11, 2025
 [v0.12.2...v0.12.11](https://github.com/sequinstream/sequin/releases/tag/v0.12.11)
 
