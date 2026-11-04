@@ -26,12 +26,13 @@
 > we hit operating Sequin, rather than a feature roadmap. Issues and PRs are welcome with that
 > scope in mind.
 >
-> - **Releases**: we continue from upstream's final release (v0.14.6) with `-ttN` suffixes —
->   see [Releases](https://github.com/triptechtravel/sequin/releases) and tags. Patched branches live under `tt/*`.
+> - **Releases**: we continue from upstream's final release (v0.14.6) with `-ttN` suffixes,
+>   tagged on `main` — see [CHANGELOG.md](./CHANGELOG.md) and the tags. Maintainer notes
+>   (branching, releasing, running the tests) are in [CLAUDE.md](./CLAUDE.md).
 > - **Docker images**: `ghcr.io/triptechtravel/sequin` (e.g. `v0.14.6` is the pristine upstream
 >   final image; `v0.14.6-tt1` adds our fixes).
-> - **Provenance**: full clone of upstream with all branches and tags as of February 2026;
->   upstream docs are preserved in [`docs/`](./docs). Sequin is MIT-licensed; the original
+> - **Provenance**: full clone of upstream as of February 2026, with all its tags; upstream's
+>   branches are archived under `refs/archive/*`. Upstream docs are preserved in [`docs/`](./docs). Sequin is MIT-licensed; the original
 >   [LICENSE](./LICENSE) and copyright are retained. "Sequin" is the name of the original
 >   project — this fork is unofficial and unaffiliated with the original company or its acquirer.
 
