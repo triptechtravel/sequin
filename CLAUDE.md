@@ -82,4 +82,4 @@ docker exec sequin-test-elixir sh -c 'mix test path/to/test.exs:LINE --include u
 - [CONTRIBUTING.md](CONTRIBUTING.md), [STYLE.md](STYLE.md), [ADD-SINK.md](ADD-SINK.md),
   [ADD-SINK-ROUTING.md](ADD-SINK-ROUTING.md): upstream developer guides
 - [docs/](docs/): upstream product docs, preserved as published
-- System map (how this fork fits with TripTech's other repos): `docs/system-map.md` (to come)
+- How this fork fits with TripTech's other systems: the system map in TripTech's private repos (`docs/system-map.md`); deliberately not copied into this public repo
