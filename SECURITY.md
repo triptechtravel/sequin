@@ -16,8 +16,7 @@ A useful report includes:
 - the version or tag you tested (e.g. `v0.14.6-tt12`)
 - a suggested fix, if you have one
 
-We aim to acknowledge reports within a few working days and will keep you updated
-in the advisory until a fix is released. We are happy to credit you in the
+We will keep you updated in the advisory until a fix is released. We are happy to credit you in the
 advisory and the [CHANGELOG](CHANGELOG.md) unless you would rather stay anonymous.
 
 ## Supported versions
